@@ -1,0 +1,83 @@
+// Renovate configuration for github.com/johnnycube/kasapi
+// Docs: https://docs.renovatebot.com/configuration-options/
+// Validate locally: npx --yes renovate-config-validator .github/renovate.json5
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+
+  extends: [
+    // Renovate's own best-practice bundle: config:recommended plus pinning
+    // GitHub Actions to commit digests (supply-chain hardening), Docker digest
+    // pinning, and automatic config migration PRs.
+    'config:best-practices',
+    // Conventional commit messages ("chore(deps): ...") keep history and any
+    // release tooling clean.
+    ':semanticCommits',
+    // Batch routine updates into Monday mornings; security updates ignore the
+    // schedule (see vulnerabilityAlerts below).
+    'schedule:earlyMondays',
+  ],
+
+  timezone: 'Europe/Berlin',
+  labels: ['dependencies'],
+
+  // Keep the PR queue reviewable. Security PRs carry a higher prPriority, so
+  // they are opened ahead of routine updates when a limit is hit.
+  prConcurrentLimit: 10,
+  prHourlyLimit: 2,
+
+  // Supply-chain caution: never propose a release younger than 3 days, so
+  // hijacked-package incidents are usually yanked before a PR appears. Security
+  // fixes bypass this via vulnerabilityAlerts.
+  minimumReleaseAge: '3 days',
+  // Hold updates that have not yet met minimumReleaseAge instead of opening a
+  // PR with a pending check.
+  internalChecksFilter: 'strict',
+
+  // Keep go.mod/go.sum consistent in every PR, and rewrite import paths on
+  // major version bumps (e.g. yaml.v3 -> v4) of the cmd/kascli dependencies
+  // (cobra, yaml.v3, x/term).
+  postUpdateOptions: ['gomodTidy', 'gomodUpdateImportPaths'],
+
+  packageRules: [
+    {
+      description: 'Group all non-major Go updates into a single weekly PR.',
+      matchManagers: ['gomod'],
+      matchUpdateTypes: ['minor', 'patch'],
+      groupName: 'go dependencies (non-major)',
+    },
+    {
+      description: 'Major Go updates stay individual PRs for explicit review.',
+      matchManagers: ['gomod'],
+      matchUpdateTypes: ['major'],
+      dependencyDashboardApproval: true,
+    },
+    {
+      description: 'Go toolchain bumps (go directive) are individual PRs; they can change vet/gofmt behavior.',
+      matchManagers: ['gomod'],
+      matchDepTypes: ['golang'],
+      groupName: 'go toolchain',
+      dependencyDashboardApproval: true,
+    },
+    {
+      description: 'GitHub Actions: digest/non-major bumps are low risk behind a green CI gate - automerge once checks pass.',
+      matchManagers: ['github-actions'],
+      matchUpdateTypes: ['minor', 'patch', 'pin', 'digest'],
+      automerge: true,
+      platformAutomerge: true,
+    },
+  ],
+
+  // Refresh go.sum (transitive hashes) monthly so the lockfile does not drift
+  // between explicit dependency bumps.
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ['before 6am on the first day of the month'],
+  },
+
+  // Open CVE-driven PRs immediately, clearly labeled. Vulnerability alerts
+  // bypass the schedule and minimumReleaseAge on their own.
+  osvVulnerabilityAlerts: true,
+  vulnerabilityAlerts: {
+    labels: ['security'],
+  },
+}
