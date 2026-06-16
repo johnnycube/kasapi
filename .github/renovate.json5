@@ -20,8 +20,8 @@
   timezone: 'Europe/Berlin',
   labels: ['dependencies'],
 
-  // Keep the PR queue reviewable. Security PRs carry a higher prPriority, so
-  // they are opened ahead of routine updates when a limit is hit.
+  // Keep the PR queue reviewable. Vulnerability PRs are created immediately and
+  // are not throttled by these limits.
   prConcurrentLimit: 10,
   prHourlyLimit: 2,
 
