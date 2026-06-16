@@ -1,0 +1,31 @@
+# Releases of the kasapi *library* are just git tags (Go modules need nothing
+# more). This config additionally ships prebuilt kascli binaries with each
+# GitHub release for convenient API verification without a Go toolchain.
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: kascli
+    main: ./cmd/kascli
+    binary: kascli
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{.Version}}"]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files: [LICENSE, NOTICE, README.md]
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: github-native
