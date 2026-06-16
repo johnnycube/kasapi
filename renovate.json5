@@ -1,6 +1,6 @@
 // Renovate configuration for github.com/johnnycube/kasapi
 // Docs: https://docs.renovatebot.com/configuration-options/
-// Validate locally: npx --yes renovate-config-validator .github/renovate.json5
+// Validate locally: npx --yes renovate-config-validator renovate.json5
 {
   $schema: 'https://docs.renovatebot.com/renovate-schema.json',
 
