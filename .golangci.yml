@@ -8,6 +8,19 @@ linters:
     - unparam
     - gosec
   settings:
+    errcheck:
+      # Writes to stdout/stderr and other fire-and-forget writers: a failed
+      # write to an already-broken pipe is not actionable, and threading the
+      # error back would only obscure the command logic.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    misspell:
+      # "adress(es)" is the KAS API's own field spelling, not a typo (see
+      # mail.go); do not flag it.
+      ignore-rules:
+        - adress
     gosec:
       excludes:
         # G401/G505: SHA1 is mandated by the KAS API auth protocol

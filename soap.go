@@ -51,7 +51,7 @@ func (c *Client) soapCall(ctx context.Context, endpoint, namespace, method, json
 	if err != nil {
 		return nil, fmt.Errorf("kasapi: performing request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
