@@ -47,7 +47,7 @@ var paramsRe = regexp.MustCompile(`(?s)<Params[^>]*>(.*?)</Params>`)
 func New(t testing.TB, handler Handler) *Server {
 	s := &Server{Password: "secret", Token: "session-token-1", handler: handler}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
-	t.Cleanup(s.Server.Close)
+	t.Cleanup(s.Close)
 	return s
 }
 

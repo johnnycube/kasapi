@@ -62,7 +62,10 @@ type fileEntry struct {
 // Load reads the config file. A missing file yields an empty config, not an
 // error (same behavior as kubectl with no kubeconfig).
 func Load(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+	// G304: path is the caller's own config file location ($KASCONFIG or
+	// ~/.config/kasapi/config), not attacker-controlled input.
+	data, err := os.ReadFile(path) //nolint:gosec
+
 	if os.IsNotExist(err) {
 		return &Config{}, nil
 	}
@@ -77,12 +80,7 @@ func Load(path string) (*Config, error) {
 
 	cfg := &Config{CurrentContext: f.CurrentContext}
 	for _, e := range f.Contexts {
-		cfg.Contexts = append(cfg.Contexts, Context{
-			Name:     e.Name,
-			Login:    e.Login,
-			AuthType: e.AuthType,
-			Password: e.Password,
-		})
+		cfg.Contexts = append(cfg.Contexts, Context(e))
 	}
 	sort.Slice(cfg.Contexts, func(i, j int) bool { return cfg.Contexts[i].Name < cfg.Contexts[j].Name })
 	return cfg, nil
@@ -98,12 +96,7 @@ func (c *Config) Save(path string) error {
 		CurrentContext: c.CurrentContext,
 	}
 	for _, ctx := range c.Contexts {
-		f.Contexts = append(f.Contexts, fileEntry{
-			Name:     ctx.Name,
-			Login:    ctx.Login,
-			AuthType: ctx.AuthType,
-			Password: ctx.Password,
-		})
+		f.Contexts = append(f.Contexts, fileEntry(ctx))
 	}
 	data, err := yaml.Marshal(f)
 	if err != nil {

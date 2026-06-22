@@ -45,7 +45,7 @@ func capture(t *testing.T, args ...string) string {
 	}
 	os.Stdout = w
 	runErr := run(args)
-	w.Close()
+	_ = w.Close()
 	os.Stdout = old
 	out, _ := io.ReadAll(r)
 	if runErr != nil {

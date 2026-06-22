@@ -67,7 +67,9 @@ func (p *printer) printList(headers, wideHeaders []string, rows []row) error {
 		fmt.Fprintln(tw, tabLine(hs))
 	}
 	if len(rows) == 0 && !p.noHeaders {
-		tw.Flush()
+		if err := tw.Flush(); err != nil {
+			return err
+		}
 		fmt.Fprintln(os.Stderr, "No resources found.")
 		return nil
 	}

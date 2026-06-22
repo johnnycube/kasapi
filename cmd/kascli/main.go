@@ -43,7 +43,7 @@ func main() {
 // against args. cli_test.go drives this directly.
 func run(args []string) error {
 	root := newRootCmd()
-	root.SetArgs(legacyExecRewrite(root, args))
+	root.SetArgs(legacyExecRewrite(args))
 	return root.Execute()
 }
 
@@ -98,7 +98,7 @@ Environment:
 // name (which always contains an underscore) routes to "exec": "kascli
 // get_ftpusers" becomes "kascli exec get_ftpusers". No real command contains an
 // underscore, so the check is unambiguous.
-func legacyExecRewrite(root *cobra.Command, args []string) []string {
+func legacyExecRewrite(args []string) []string {
 	tok, idx := firstPositional(args)
 	if idx < 0 || !strings.Contains(tok, "_") {
 		return args
