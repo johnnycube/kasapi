@@ -6,6 +6,7 @@ package kasapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/johnnycube/kasapi/kasapitest"
@@ -21,6 +22,7 @@ func TestMail_ListAccountsAndForwards(t *testing.T) {
   <item><key>mail_adresses</key><value>info@example.com;kontakt@example.com</value></item>
   <item><key>mail_responder</key><value>N</value></item>
   <item><key>mail_copy_adress</key><value>archive@example.org</value></item>
+  <item><key>mail_sender_alias</key><value>alias@example.com,other@example.com</value></item>
  </item>`, ""
 		case "get_mailforwards":
 			return `
@@ -31,6 +33,12 @@ func TestMail_ListAccountsAndForwards(t *testing.T) {
 		case "add_mailaccount":
 			if params["mail_password"] != "S3cure!pass" {
 				return "", "password_missing"
+			}
+			if params["copy_adress"] != "archive@example.org" {
+				return "", "bad_copy_adress"
+			}
+			if params["mail_sender_alias"] != "alias@example.com,other@example.com" {
+				return "", "bad_sender_alias"
 			}
 			return `m7654321`, ""
 		}
@@ -51,9 +59,17 @@ func TestMail_ListAccountsAndForwards(t *testing.T) {
 	if len(accounts[0].CopyAddresses) != 1 {
 		t.Fatalf("unexpected copy addresses: %+v", accounts[0].CopyAddresses)
 	}
+	if len(accounts[0].SenderAliases) != 2 || accounts[0].SenderAliases[0] != "alias@example.com" {
+		t.Fatalf("unexpected sender aliases: %+v", accounts[0].SenderAliases)
+	}
 
 	login, err := c.Mail.CreateAccount(context.Background(),
-		MailAccount{LocalPart: "neu", Domain: "example.com"}, "S3cure!pass")
+		MailAccount{
+			LocalPart:     "neu",
+			Domain:        "example.com",
+			CopyAddresses: []string{"archive@example.org"},
+			SenderAliases: []string{"alias@example.com", "other@example.com"},
+		}, "S3cure!pass")
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
@@ -86,6 +102,21 @@ func TestMail_InputValidation(t *testing.T) {
 	if err := c.Mail.CreateForward(ctx, MailForward{LocalPart: "a", Domain: "example.com"}); err == nil {
 		t.Fatal("expected validation error for missing targets")
 	}
+	tooMany := make([]string, 11)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("t%d@example.org", i)
+	}
+	if err := c.Mail.CreateForward(ctx, MailForward{LocalPart: "a", Domain: "example.com",
+		Targets: tooMany}); err == nil {
+		t.Fatal("expected validation error for more than 10 targets")
+	}
+	if _, err := c.Mail.CreateAccount(ctx, MailAccount{LocalPart: "ok", Domain: "example.com",
+		SenderAliases: []string{"not an address"}}, "p"); err == nil {
+		t.Fatal("expected validation error for invalid sender alias")
+	}
+	if err := c.Mail.UpdateSenderAliases(ctx, "m1", []string{"not an address"}); err == nil {
+		t.Fatal("expected validation error for invalid sender alias")
+	}
 	if f.APICalls.Load() != 0 {
 		t.Fatalf("validation failures must not reach the API, got %d calls", f.APICalls.Load())
 	}
@@ -103,6 +134,12 @@ func TestMail_AccountUpdateDelete(t *testing.T) {
 		case "update_mailaccount":
 			if params["mail_login"] != "m1" {
 				return "", "mail_login_not_found"
+			}
+			if v, ok := params["copy_adress"]; ok && v != "a@example.org" {
+				return "", "bad_copy_adress"
+			}
+			if v, ok := params["mail_sender_alias"]; ok && v != "alias@example.com" && v != "" {
+				return "", "bad_sender_alias"
 			}
 			return "TRUE", ""
 		case "delete_mailaccount":
@@ -140,6 +177,16 @@ func TestMail_AccountUpdateDelete(t *testing.T) {
 		t.Fatal("UpdateCopyAddresses without login must fail")
 	}
 
+	if err := c.Mail.UpdateSenderAliases(ctx, "m1", []string{"alias@example.com"}); err != nil {
+		t.Fatalf("UpdateSenderAliases: %v", err)
+	}
+	if err := c.Mail.UpdateSenderAliases(ctx, "m1", nil); err != nil {
+		t.Fatalf("UpdateSenderAliases (clear): %v", err)
+	}
+	if err := c.Mail.UpdateSenderAliases(ctx, "", nil); err == nil {
+		t.Fatal("UpdateSenderAliases without login must fail")
+	}
+
 	if err := c.Mail.DeleteAccount(ctx, "m1"); err != nil {
 		t.Fatalf("DeleteAccount: %v", err)
 	}
@@ -160,12 +207,12 @@ func TestMail_ForwardCRUD(t *testing.T) {
 				kasapitest.MapItem("mail_forward_targets", "a@example.org") +
 				`</item>`, ""
 		case "add_mailforward":
-			if params["target_1"] != "a@example.org" {
+			if params["target_0"] != "a@example.org" {
 				return "", "missing_target"
 			}
 			return "TRUE", ""
 		case "update_mailforward":
-			if params["mail_forward"] != "sales@example.com" || params["target_2"] != "b@example.org" {
+			if params["mail_forward"] != "sales@example.com" || params["target_1"] != "b@example.org" {
 				return "", "bad_update"
 			}
 			return "TRUE", ""

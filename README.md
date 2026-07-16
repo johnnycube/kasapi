@@ -35,8 +35,10 @@ The client is one layer over the raw API, with typed services on top:
 - **`Client.Exec`.** One entry point that runs any KAS action with raw
   parameters. Every typed service is a thin wrapper over it, and it is the
   escape hatch for actions that have no wrapper yet.
-- **Typed services.** `DNS`, `Mail` (accounts and forwards), `Subdomains`,
-  `Domains` (read-only). Adding one is a single file over `Exec`.
+- **Typed services.** `DNS`, `Mail` (accounts with sender aliases, and
+  forwards), `Subdomains`, `Domains` (read-only). Adding one is a single file
+  over `Exec`. KAS has no standalone mail-alias objects: sender aliases are a
+  mailbox property, receiving aliases are forwards.
 
 TLS 1.2 is the floor on the default HTTP client, responses are size-limited,
 and the client is safe for concurrent use — calls serialize because the API

@@ -13,6 +13,10 @@ import (
 
 // MailService wraps the KAS email account and forward actions.
 //
+// KAS has no standalone alias objects: incoming aliases are modeled as mail
+// forwards, outgoing (sender) aliases as the mail_sender_alias list of a
+// mailbox — see MailAccount.SenderAliases.
+//
 // Parameter names follow the KAS panel docs (Tools -> KAS API); verify them
 // against a live get_mailaccounts / get_mailforwards response before relying on
 // them. The one-d spelling "adress(es)" is the API's, not a typo.
@@ -29,6 +33,10 @@ type MailAccount struct {
 
 	// CopyAddresses receive a copy of every incoming mail.
 	CopyAddresses []string
+	// SenderAliases are addresses the mailbox may use in the FROM header
+	// when sending. To receive mail under an alias, create a MailForward
+	// pointing at this mailbox instead.
+	SenderAliases []string
 	// ResponderActive reports whether an autoresponder is enabled.
 	ResponderActive bool
 }
@@ -53,9 +61,22 @@ func validateTargets(targets []string) error {
 	if len(targets) == 0 {
 		return errors.New("kasapi: at least one forward target is required")
 	}
+	// The API accepts target_0..target_9.
+	if len(targets) > 10 {
+		return fmt.Errorf("kasapi: at most 10 forward targets are supported, got %d", len(targets))
+	}
 	for _, t := range targets {
 		if _, err := mail.ParseAddress(t); err != nil {
 			return fmt.Errorf("kasapi: invalid forward target %q: %w", t, err)
+		}
+	}
+	return nil
+}
+
+func validateAddressList(kind string, addrs []string) error {
+	for _, a := range addrs {
+		if _, err := mail.ParseAddress(a); err != nil {
+			return fmt.Errorf("kasapi: invalid %s %q: %w", kind, a, err)
 		}
 	}
 	return nil
@@ -85,6 +106,7 @@ func (s *MailService) ListAccounts(ctx context.Context) ([]MailAccount, error) {
 			Login:           asString(m["mail_login"]),
 			ResponderActive: asString(m["mail_responder"]) == "Y",
 			CopyAddresses:   splitAddressList(asString(m["mail_copy_adress"])),
+			SenderAliases:   splitAddressList(asString(m["mail_sender_alias"])),
 		}
 		// mail_adresses lists the addresses bound to the account.
 		if addrs := splitAddressList(asString(m["mail_adresses"])); len(addrs) > 0 {
@@ -120,13 +142,24 @@ func (s *MailService) CreateAccount(ctx context.Context, a MailAccount, password
 	if password == "" {
 		return "", errors.New("kasapi: mail account password must not be empty")
 	}
+	if err := validateAddressList("copy address", a.CopyAddresses); err != nil {
+		return "", err
+	}
+	if err := validateAddressList("sender alias", a.SenderAliases); err != nil {
+		return "", err
+	}
 
 	params := map[string]any{
 		"local_part":    a.LocalPart,
 		"domain_part":   a.Domain,
 		"mail_password": password,
 	}
-	addCopyAddressParams(params, a.CopyAddresses)
+	if len(a.CopyAddresses) > 0 {
+		params["copy_adress"] = strings.Join(a.CopyAddresses, ",")
+	}
+	if len(a.SenderAliases) > 0 {
+		params["mail_sender_alias"] = strings.Join(a.SenderAliases, ",")
+	}
 
 	ret, err := s.c.Exec(ctx, "add_mailaccount", params)
 	if err != nil {
@@ -168,16 +201,42 @@ func (s *MailService) UpdatePassword(ctx context.Context, login, newPassword str
 	return nil
 }
 
-// UpdateCopyAddresses replaces the copy address list of a mailbox.
+// UpdateCopyAddresses replaces the copy address list of a mailbox. An empty
+// list clears it.
 func (s *MailService) UpdateCopyAddresses(ctx context.Context, login string, copyAddresses []string) error {
 	if login == "" {
 		return errors.New("kasapi: mail login must not be empty")
 	}
-	params := map[string]any{"mail_login": login}
-	addCopyAddressParams(params, copyAddresses)
-	_, err := s.c.Exec(ctx, "update_mailaccount", params)
+	if err := validateAddressList("copy address", copyAddresses); err != nil {
+		return err
+	}
+	_, err := s.c.Exec(ctx, "update_mailaccount", map[string]any{
+		"mail_login":  login,
+		"copy_adress": strings.Join(copyAddresses, ","),
+	})
 	if err != nil {
 		return fmt.Errorf("updating copy addresses of mail account %s: %w", login, err)
+	}
+	return nil
+}
+
+// UpdateSenderAliases replaces the sender alias list of a mailbox — the
+// addresses it may use in the FROM header when sending. An empty list clears
+// it. Aliases only affect sending; to receive mail under an alias, create a
+// MailForward pointing at the mailbox.
+func (s *MailService) UpdateSenderAliases(ctx context.Context, login string, aliases []string) error {
+	if login == "" {
+		return errors.New("kasapi: mail login must not be empty")
+	}
+	if err := validateAddressList("sender alias", aliases); err != nil {
+		return err
+	}
+	_, err := s.c.Exec(ctx, "update_mailaccount", map[string]any{
+		"mail_login":        login,
+		"mail_sender_alias": strings.Join(aliases, ","),
+	})
+	if err != nil {
+		return fmt.Errorf("updating sender aliases of mail account %s: %w", login, err)
 	}
 	return nil
 }
@@ -329,16 +388,9 @@ func splitAddressList(s string) []string {
 	return out
 }
 
-// addTargetParams sets target_1..target_N as expected by the forward actions.
+// addTargetParams sets target_0..target_9 as expected by the forward actions.
 func addTargetParams(params map[string]any, targets []string) {
 	for i, t := range targets {
-		params[fmt.Sprintf("target_%d", i+1)] = t
-	}
-}
-
-// addCopyAddressParams sets copy_adress_0..copy_adress_N for account actions.
-func addCopyAddressParams(params map[string]any, addrs []string) {
-	for i, a := range addrs {
-		params[fmt.Sprintf("copy_adress_%d", i)] = a
+		params[fmt.Sprintf("target_%d", i)] = t
 	}
 }

@@ -110,17 +110,18 @@ func cmdGet(g *globals, args []string, zone string) error {
 			rows = append(rows, row{
 				name:      "mailaccount/" + a.Login,
 				cells:     []string{a.Login, a.Address(), boolWord(a.ResponderActive)},
-				wideCells: []string{strings.Join(a.CopyAddresses, ",")},
+				wideCells: []string{strings.Join(a.CopyAddresses, ","), strings.Join(a.SenderAliases, ",")},
 				object: map[string]any{
 					"login": a.Login, "address": a.Address(),
 					"responderActive": a.ResponderActive,
 					"copyAddresses":   anySlice(a.CopyAddresses),
+					"senderAliases":   anySlice(a.SenderAliases),
 				},
 			})
 		}
 		return p.printList(
 			[]string{"LOGIN", "ADDRESS", "RESPONDER"},
-			[]string{"COPY-ADDRESSES"}, rows)
+			[]string{"COPY-ADDRESSES", "SENDER-ALIASES"}, rows)
 
 	case "mailforwards":
 		forwards, err := client.Mail.ListForwards(ctx)

@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.2.0 — 2026-07-16
+
+Mail sender aliases, and two parameter fixes verified against the KAS API
+documentation. KAS has no standalone mail-alias objects: sender aliases are a
+mailbox property (`mail_sender_alias`), receiving aliases are forwards.
+
+- `MailAccount.SenderAliases` and `MailService.UpdateSenderAliases`: the
+  addresses a mailbox may use in the FROM header when sending. Read from
+  `get_mailaccounts`, set on create and update. `kascli get mailaccounts`
+  shows them in `-o wide` and as `senderAliases` in json/yaml.
+- Fixed: copy addresses are sent as the single comma-separated `copy_adress`
+  parameter, not `copy_adress_0..N`.
+- Fixed: forward targets are sent as `target_0..target_9` (0-indexed), not
+  `target_1..N`, which silently dropped one of ten targets. Forwards now
+  reject more than 10 targets, and account actions validate copy addresses
+  and sender aliases before calling the API.
+
 ## v0.1.0 — 2026-06-16
 
 First release.

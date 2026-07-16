@@ -49,4 +49,26 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
+
+# AI agents (instruction files and local state stay per-developer)
 CLAUDE.md
+.claude/
+AGENTS.md
+.codex/
+GEMINI.md
+.gemini/
+.cursor/
+.cursorrules
+.cursorignore
+.windsurf/
+.windsurfrules
+.aider*
+.cline/
+.clinerules
+.roo/
+.roorules
+.continue/
+.amazonq/
+.junie/
+.opencode/
+.github/copilot-instructions.md
