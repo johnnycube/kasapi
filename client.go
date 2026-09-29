@@ -83,6 +83,7 @@ type Client struct {
 	FTP        *FTPService
 	Databases  *DatabaseService
 	Cronjobs   *CronjobService
+	DDNS       *DDNSService
 }
 
 // New creates a configured Client.
@@ -133,6 +134,7 @@ func New(cfg Config) (*Client, error) {
 	c.FTP = &FTPService{c: c}
 	c.Databases = &DatabaseService{c: c}
 	c.Cronjobs = &CronjobService{c: c}
+	c.DDNS = &DDNSService{c: c}
 	return c, nil
 }
 
