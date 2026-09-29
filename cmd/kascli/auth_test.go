@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -92,6 +94,28 @@ func TestCLI_ExecShorthandSkipsOTPValue(t *testing.T) {
 	}
 }
 
+func TestLegacyExecRewrite(t *testing.T) {
+	for _, tc := range []struct{ in, want []string }{
+		{[]string{"get_ftpusers"}, []string{"exec", "get_ftpusers"}},
+		{[]string{"-o", "yaml", "get_ftpusers", "a=b"}, []string{"-o", "yaml", "exec", "get_ftpusers", "a=b"}},
+		{[]string{"--no-headers", "get_x"}, []string{"--no-headers", "exec", "get_x"}},
+		{[]string{"--timeout", "5s", "--context", "p", "get_x"}, []string{"--timeout", "5s", "--context", "p", "exec", "get_x"}},
+		{[]string{"--output=json", "get_x"}, []string{"--output=json", "exec", "get_x"}},
+		{[]string{"get", "domains"}, []string{"get", "domains"}},
+		{[]string{"exec", "get_x"}, []string{"exec", "get_x"}},
+		{[]string{"create", "dns", "--data", "v=spf1_x"}, []string{"create", "dns", "--data", "v=spf1_x"}},
+		{[]string{"--context"}, []string{"--context"}},
+		{nil, nil},
+	} {
+		if got := legacyExecRewrite(tc.in); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("legacyExecRewrite(%v) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+	if tok, idx := firstPositional([]string{"-o", "json"}); tok != "" || idx != -1 {
+		t.Fatalf("firstPositional without positional: %q %d", tok, idx)
+	}
+}
+
 func TestOTPSource(t *testing.T) {
 	ctx := context.Background()
 	if otpSource("w1", "", false) != nil {
@@ -137,5 +161,79 @@ func TestPromptSecretAndReadSecretLine(t *testing.T) {
 	setStdin(t, "from-prompt\n")
 	if got, err := promptSecret("Password"); err != nil || got != "from-prompt" {
 		t.Fatalf("promptSecret: %q %v", got, err)
+	}
+}
+
+func TestCLI_PasswordPrompt(t *testing.T) {
+	setupFake(t, map[string]string{"get_domains": entry("domain_name", "example.com")})
+	t.Setenv("KASCONFIG", filepath.Join(t.TempDir(), "config"))
+	t.Setenv("KAS_LOGIN", "w0123456")
+
+	setStdin(t, "secret\n")
+	if out := capture(t, "get", "domains"); !strings.Contains(out, "example.com") {
+		t.Fatalf("prompted password:\n%s", out)
+	}
+	setStdin(t, "")
+	wantErr(t, "reading input", "get", "domains")
+	setStdin(t, "wrong\n")
+	wantErr(t, "kas_login_incorrect", "get", "domains")
+}
+
+func TestCLI_CredentialSources(t *testing.T) {
+	setupFake(t, map[string]string{"get_domains": entry("domain_name", "example.com")})
+
+	// The environment overrides the context.
+	t.Setenv("KAS_PASSWORD", "wrong")
+	wantErr(t, "kas_login_incorrect", "get", "domains")
+	t.Setenv("KAS_PASSWORD", "secret")
+	t.Setenv("KAS_AUTH_TYPE", "plain")
+	capture(t, "get", "domains")
+	t.Setenv("KAS_AUTH_TYPE", "md5")
+	wantErr(t, "unsupported auth type", "get", "domains")
+	t.Setenv("KAS_AUTH_TYPE", "")
+
+	wantErr(t, `context "missing" not found`, "--context", "missing", "get", "domains")
+
+	path := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(path, []byte("contexts: [\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KASCONFIG", path)
+	wantErr(t, "parsing", "get", "domains")
+	wantErr(t, "parsing", "config", "get-contexts")
+	wantErr(t, "parsing", "config", "current-context")
+	wantErr(t, "parsing", "config", "use-context", "x")
+	wantErr(t, "parsing", "config", "set-context", "x", "--login", "w1")
+	wantErr(t, "parsing", "config", "delete-context", "x")
+	wantErr(t, "parsing", "config", "view")
+}
+
+// TestMain_ExitCode runs the binary: main ends the process.
+func TestMain_ExitCode(t *testing.T) {
+	if os.Getenv("KASCLI_RUN_MAIN") == "1" {
+		os.Args = append([]string{"kascli"}, strings.Fields(os.Getenv("KASCLI_ARGS"))...)
+		main()
+		return
+	}
+	runMain := func(args string) (string, error) {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestMain_ExitCode$")
+		cmd.Env = append(os.Environ(), "KASCLI_RUN_MAIN=1", "KASCLI_ARGS="+args,
+			"KASCONFIG="+filepath.Join(t.TempDir(), "config"))
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+
+	out, err := runMain("version")
+	if err != nil || !strings.Contains(out, "kascli version") {
+		t.Fatalf("version: %v\n%s", err, out)
+	}
+
+	out, err = runMain("get pods")
+	var exitErr *exec.ExitError
+	if !errorsAs(err, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("a failing command must exit with 1, got %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "error: the server doesn't have a resource type") {
+		t.Fatalf("the error must be printed:\n%s", out)
 	}
 }

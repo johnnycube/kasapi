@@ -5,6 +5,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -131,3 +132,5 @@ func wantErr(t *testing.T, want string, args ...string) {
 		t.Errorf("run(%v): got %v, want an error containing %q", args, err, want)
 	}
 }
+
+func errorsAs(err error, target any) bool { return errors.As(err, target) }
