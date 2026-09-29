@@ -8,6 +8,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -33,13 +34,26 @@ func (c *Client) ensureSessionLocked(ctx context.Context) error {
 		authData = hex.EncodeToString(sum[:])
 	}
 
-	payload, err := json.Marshal(map[string]any{
+	req := map[string]any{
 		"kas_login":               c.cfg.Login,
 		"kas_auth_type":           string(c.cfg.AuthType),
 		"kas_auth_data":           authData,
 		"session_lifetime":        c.cfg.SessionLifetime,
 		"session_update_lifetime": "Y",
-	})
+	}
+	if c.cfg.OTP != nil {
+		// session_2fa is not yet verified against an account with 2FA enabled.
+		pin, err := c.cfg.OTP(ctx)
+		if err != nil {
+			return fmt.Errorf("kasapi: obtaining one-time PIN: %w", err)
+		}
+		if pin == "" {
+			return errors.New("kasapi: one-time PIN must not be empty")
+		}
+		req["session_2fa"] = pin
+	}
+
+	payload, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("kasapi: encoding auth request: %w", err)
 	}

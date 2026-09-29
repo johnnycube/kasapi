@@ -48,6 +48,9 @@ type Config struct {
 	Password string // account or API password
 	AuthType AuthType
 
+	// OTP supplies the one-time PIN for 2FA accounts on every session handshake.
+	OTP func(ctx context.Context) (string, error)
+
 	SessionLifetime int // seconds, max 3600; default 1800
 	UserAgent       string
 

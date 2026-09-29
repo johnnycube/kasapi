@@ -34,6 +34,8 @@ type Server struct {
 	Password string
 	// Token is the session token issued by KasAuth (default "session-token-1").
 	Token string
+	// OTP, when set, is the one-time PIN KasAuth requires as session_2fa.
+	OTP string
 
 	AuthCalls atomic.Int64
 	APICalls  atomic.Int64
@@ -85,6 +87,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		if !ok {
 			s.WriteFault(w, "kas_login_incorrect")
+			return
+		}
+		if s.OTP != "" && req["session_2fa"] != s.OTP {
+			s.WriteFault(w, "kas_2fa_incorrect")
 			return
 		}
 		fmt.Fprint(w, Envelope(`<return xsi:type="xsd:string">`+s.Token+`</return>`))
