@@ -119,10 +119,10 @@ func TestCLI_DeleteOtherResources(t *testing.T) {
 		}
 	}
 
-	// domains are read-only via the delete verb
+	// domains have no delete verb
 	if err := run([]string{"delete", "domain", "example.com"}); err == nil ||
-		!strings.Contains(err.Error(), "read-only") {
-		t.Fatalf("expected read-only error, got %v", err)
+		!strings.Contains(err.Error(), "cannot be deleted") {
+		t.Fatalf("expected a refusal, got %v", err)
 	}
 }
 

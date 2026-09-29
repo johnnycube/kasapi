@@ -192,7 +192,7 @@ func TestCLI_VersionAndAPIResources(t *testing.T) {
 	}
 	out = capture(t, "api-resources", "-o", "json")
 	var items []map[string]any
-	if err := json.Unmarshal([]byte(out), &items); err != nil || len(items) != 5 {
+	if err := json.Unmarshal([]byte(out), &items); err != nil || len(items) != len(resources) {
 		t.Fatalf("api-resources json: %v %q", err, out)
 	}
 	out = capture(t, "api-resources", "--no-headers")
