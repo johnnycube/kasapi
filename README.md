@@ -6,7 +6,8 @@
 
 A Go client for the all-inkl.com KAS hosting API. The KAS panel is exposed as
 a SOAP service; this package wraps it in typed methods for the resources worth
-automating — DNS records, mailboxes, forwards, subdomains — over a transport
+automating — DNS records, mailboxes, forwards, domains and subdomains, TLS
+certificates, FTP users, databases, cronjobs, dynamic DNS — over a transport
 that handles the session handshake, the flood-protection delays and the
 PHP-shaped responses on its own.
 
@@ -28,6 +29,9 @@ The client is one layer over the raw API, with typed services on top:
   (SHA1 by default, plain optional), transparent re-authentication when a
   session expires, and the generic decoder that turns KAS's SOAP-encoded PHP
   structures into `map[string]any` / `[]any`.
+- **Two-factor authentication.** `Config.OTP` is a callback that supplies the
+  one-time PIN. It runs on every handshake — a session that expires needs a
+  fresh PIN, so a static value would not survive re-authentication.
 - **Flood protection.** Every KAS response carries a `KasFloodDelay` that must
   elapse before the next request. The client honors it, serializes calls, and
   retries `flood_protection` faults with bounded backoff. Large batches apply
@@ -35,14 +39,59 @@ The client is one layer over the raw API, with typed services on top:
 - **`Client.Exec`.** One entry point that runs any KAS action with raw
   parameters. Every typed service is a thin wrapper over it, and it is the
   escape hatch for actions that have no wrapper yet.
-- **Typed services.** `DNS`, `Mail` (accounts with sender aliases, and
-  forwards), `Subdomains`, `Domains` (read-only). Adding one is a single file
-  over `Exec`. KAS has no standalone mail-alias objects: sender aliases are a
-  mailbox property, receiving aliases are forwards.
+- **Typed services.** One per resource, listed below. Adding one is a single
+  file over `Exec`.
+
+| Service      | Covers | KAS actions |
+|--------------|--------|-------------|
+| `DNS`        | records of a zone | `get/add/update/delete_dns_settings` |
+| `Domains`    | domains and their host settings; no registration, transfer or deletion | `get_domains`, `update_domain` |
+| `Subdomains` | subdomains and their host settings | `get/add/update/delete_subdomain` |
+| `TLS`        | certificate, HTTPS redirect and HSTS of a host | `update_ssl` |
+| `Mail`       | mailboxes, forwards, autoresponder, access restrictions, standard filters | `*_mailaccount`, `*_mailforward`, `*_mailstandardfilter` |
+| `FTP`        | additional FTP logins | `get/add/update/delete_ftpuser` |
+| `Databases`  | MySQL databases | `get/add/update/delete_database` |
+| `Cronjobs`   | scheduled URL requests | `get/add/update/delete_cronjob` |
+| `DDNS`       | dynamic DNS users | `get/add/update/delete_ddnsuser` |
+
+Three conventions hold across the services:
+
+- **Host settings.** Domains and subdomains share `HostSettings`: document
+  root, redirect (`0`, `301`, `302`, `307`), PHP version and the active flag.
+  Unset fields are not sent. A subdomain created without a PHP version gets
+  the KAS default, which the API documents as 7.1 — set one.
+- **Updates are idempotent.** KAS answers an update that changes nothing with
+  the fault `nothing_to_do`. The desired state is reached, so update methods
+  return success.
+- **Secrets are write-only.** KAS returns mailbox, FTP, database and DDNS
+  passwords and the TLS private key in its `get_*` responses. The services
+  deliberately do not map them.
+
+KAS has no standalone mail-alias objects: sender aliases are a mailbox
+property, receiving aliases are forwards.
 
 TLS 1.2 is the floor on the default HTTP client, responses are size-limited,
 and the client is safe for concurrent use — calls serialize because the API
 requires it.
+
+## TLS and Let's Encrypt
+
+`TLS.Update` installs a certificate you bring and sets the HTTPS redirect and
+HSTS of a host. Certificate and key are checked before they leave the
+process: they must form a pair, and the certificate must name the host.
+
+**The API cannot request a Let's Encrypt certificate.** `update_ssl` has no
+ACME parameter. The issuance KAS offers is a panel feature (Domain → Edit →
+SSL protection → Let's Encrypt) with no counterpart in the API, so neither
+the library nor `kascli` can switch it on. What the API does report is the
+result: `HostTLS.LetsEncrypt()` tells whether a host serves a certificate
+issued that way.
+
+To automate issuance, run an ACME client against the DNS-01 challenge —
+`DNS.Create` writes the `_acme-challenge` TXT record — and install the
+certificate with `TLS.Update`. For Kubernetes,
+[cert-manager-webhook-all-inkl](https://github.com/johnnycube/cert-manager-webhook-all-inkl)
+does the DNS-01 part.
 
 ## Usage
 
@@ -57,9 +106,25 @@ if err != nil {
 
 records, err := client.DNS.List(ctx, "example.com")
 
+// A redirecting subdomain on a chosen PHP version.
+err = client.Subdomains.CreateWithSettings(ctx, "go", "example.com", kasapi.HostSettings{
+    Path:           "https://example.org",
+    RedirectStatus: new(301),
+    PHPVersion:     "8.4",
+})
+
+// An FTP login that may read and list, nothing else.
+login, err := client.FTP.Create(ctx, kasapi.FTPUser{
+    Path: "/logs/", Comment: "log reader", Read: true, List: true,
+}, password)
+
 // Any action without a typed wrapper:
-ret, err := client.Exec(ctx, "get_ftpusers", map[string]any{})
+ret, err := client.Exec(ctx, "get_mailinglists", map[string]any{})
 ```
+
+Structs that describe a whole object — `FTPUser`, `Cronjob` — are sent as
+given. Their zero value grants no permission and leaves a cronjob inactive,
+so set what the object needs.
 
 ## kascli
 
@@ -78,33 +143,61 @@ kascli config use-context staging
 kascli config view                  # YAML, passwords redacted (--raw to show)
 
 # kubectl verbs and output conventions
-kascli get domains
+kascli api-resources                           # resource types and their verbs
+kascli get domains -o wide                     # redirect, PHP, TLS state
 kascli get dnsrecords --zone example.com -o wide
 kascli get mailaccounts -o yaml
 kascli get subdomains --no-headers
 kascli get dns --zone example.com -o name      # dnsrecord/12345
+kascli get tls blog.example.com
 kascli --context prod get mailforwards -o json
 kascli delete dnsrecord 12345
 
+# create and update; an update changes only the flags that are given
+kascli create dnsrecord --zone example.com --name www --type A --data 203.0.113.10
+kascli create subdomain --name go --domain example.com \
+    --path https://example.org --redirect 301 --php 8.4
+kascli create ftpuser --path /logs/ --comment "log reader" --write=false
+kascli update subdomain blog.example.com --php 8.4
+kascli update mailaccount m0123456 --responder on --responder-text "Back on Monday." \
+    --responder-from 2026-12-24 --responder-until 2027-01-04
+kascli update tls example.com --cert fullchain.pem --key privkey.pem --force-https
+kascli update cronjob 325208 --active=false
+
 # raw escape hatch for any KAS action
-kascli exec get_ftpusers
+kascli exec get_mailinglists
 kascli exec add_dns_settings zone_host=example.com. record_type=TXT \
     record_name=_test record_data=hello record_aux=0
 ```
 
-Resource short names: `dns`, `ma`, `mf`, `sub`, `do`. Output formats: `table`
-(default), `wide`, `json`, `yaml`, `name`; `--no-headers` for scripting.
+Resource short names: `dns`, `do`, `sub`, `ma`, `mf`, `mfi`, `ftp`, `db`,
+`cj`, `ddns`. Output formats: `table` (default), `wide`, `json`, `yaml`,
+`name`; `--no-headers` for scripting.
+
+Passwords are never flag values — they would land in the shell history and
+the process list. Commands that set one ask for it at the terminal, or read
+it from stdin with `--password-stdin`.
+
+`kascli update tls` installs a certificate from PEM files. It has no flag
+that orders a Let's Encrypt certificate, because the API has none — see
+[TLS and Let's Encrypt](#tls-and-lets-encrypt).
 
 Credentials resolve like kubectl: `--context` selects the context, otherwise
 `current-context` applies. `KAS_LOGIN` / `KAS_PASSWORD` override the context's
 values, and a missing password is prompted for interactively (echo disabled
-where the terminal allows it). Storing a password in the config file is
+where the terminal allows it). For an account with two-factor authentication,
+mark the context with `kascli config set-context NAME --two-factor` and
+`kascli` asks for the one-time PIN on login; `--otp` or `KAS_OTP` supply it
+without a prompt. Storing a password in the config file is
 optional and warned about — the environment variable or the prompt avoid it.
 
 The raw `exec` verb doubles as the way to confirm KAS field names against a
-real account before relying on the typed services. The mail and subdomain
-parameter names follow the KAS panel documentation and carry verification
-notes in the source until checked against live responses.
+real account. Request parameters follow the
+[KAS API documentation](https://kasapi.kasserver.com/dokumentation/phpdoc/);
+response fields follow recorded KAS responses. Neither is checked against a
+live account yet, so the verification notes in the source stay. The same
+holds for `session_2fa`: it is documented for `add_session` and sent to
+`KasAuth` on that basis.
 
 `kascli` is built on [cobra](https://github.com/spf13/cobra) (commands,
 `--help` trees and shell completion via `kascli completion <shell>`),
@@ -120,10 +213,12 @@ go test -race ./...        # unit tests + the kasapitest fake server
 make cover                 # coverage summary
 ```
 
-The suite covers the SOAP decoder, the auth handshake, session reuse and
-re-authentication, flood backoff, and the field mappings of every service.
-`kasapitest` provides an in-process fake KAS server for use in downstream
-tests without credentials.
+The suite covers the SOAP decoder, the auth handshake with and without a
+one-time PIN, session reuse and re-authentication, flood backoff, every
+method of every service with its request parameters and fault handling, and
+every `kascli` command. `kasapitest` provides an in-process fake KAS server
+for use in downstream tests without credentials; set `Server.OTP` to make it
+require a one-time PIN.
 
 ## Extending
 
@@ -131,22 +226,27 @@ A new resource type is one file. Add a typed service over `Client.Exec`
 mirroring the existing ones:
 
 ```go
-type FTPService struct{ c *Client }
+type MailingListService struct{ c *Client }
 
-func (s *FTPService) Create(ctx context.Context, user, password, path string) error {
-    _, err := s.c.Exec(ctx, "add_ftpuser", map[string]any{
-        "ftp_user":     user,
-        "ftp_password": password,
-        "ftp_path":     path,
+func (s *MailingListService) Create(ctx context.Context, name, domain, password string) error {
+    _, err := s.c.Exec(ctx, "add_mailinglist", map[string]any{
+        "mailinglist_name":     name,
+        "mailinglist_domain":   domain,
+        "mailinglist_password": password,
     })
     return err
 }
 ```
 
-Register it in `New()` (`c.FTP = &FTPService{c: c}`) and add tests against
-`kasapitest`. The KAS actions for the common cases already exist:
-`get_ftpusers` / `add_ftpuser` / …, `get_databases` / `add_database` / …,
-`get_cronjobs` / `add_cronjob` / …
+Register it in `New()` (`c.MailingLists = &MailingListService{c: c}`) and add
+tests against `kasapitest`. The helpers in `params.go` cover the recurring
+parts: `list` and `getOne` for `get_*` actions, `update` and `remove` for the
+fault codes that mean "unchanged" or "absent".
+
+KAS actions without a typed service: mailing lists (`*_mailinglist`),
+directory protection (`*_directoryprotection`), network drive users
+(`*_sambauser`), software installs, symlinks, the statistics (`get_space`,
+`get_traffic`) and the account actions for resellers.
 
 ## License
 
