@@ -74,6 +74,178 @@ TLS 1.2 is the floor on the default HTTP client, responses are size-limited,
 and the client is safe for concurrent use — calls serialize because the API
 requires it.
 
+## Objects
+
+One section per object: the type, the service that manages it, its `kascli`
+resource and its fields. Fields marked *read-only* are reported by KAS and
+ignored on writes.
+
+### Domain and Subdomain
+
+`Domains` (`List`, `Get`, `Update`) and `Subdomains` (`List`, `Get`, `Create`,
+`CreateWithSettings`, `Update`, `UpdatePath`, `Delete`). kascli: `domains`
+(`do`), `subdomains` (`sub`).
+
+- **`Name` / `FQDN`** — the host name, which is also the identifier.
+- **`Path`** — document root relative to the account root, or the redirect
+  target when `RedirectStatus` is not 0.
+- **`RedirectStatus`** — `0` (none), `301`, `302` or `307`.
+- **`PHPVersion`** — e.g. `"8.4"`.
+- **`Active`** — whether the host is served. KAS accepts it on updates only.
+- **`PHPDeprecated`**, **`InProgress`** — *read-only*. `InProgress` means KAS
+  is still applying a change; updates fail with `in_progress` until it clears.
+- **`DKIMSelector`** — *read-only*, domains only.
+- **`TLS`** — *read-only*, the `HostTLS` of the host.
+
+Writes take `HostSettings` with `Path`, `RedirectStatus`, `PHPVersion` and
+`Active`. `RedirectStatus` and `Active` are pointers, so that "not set" and
+"set to 0 / false" differ.
+
+### HostTLS and TLSUpdate
+
+`TLS` (`Get`, `Update`). kascli: `tls`.
+
+`HostTLS` is the state KAS reports:
+
+- **`Active`** — whether the certificate is served.
+- **`Type`** — the certificate type as KAS names it. `LE90D` marks a Let's
+  Encrypt certificate issued through the panel; `LetsEncrypt()` tests for it.
+- **`ForceHTTPS`** — whether HTTP requests are redirected to HTTPS.
+- **`HSTSMaxAge`** — in seconds, `-1` when HSTS is off.
+- **`Certificate`**, **`Bundle`** — PEM-encoded.
+
+`TLSUpdate` is a change:
+
+- **`Certificate`**, **`Key`** — PEM-encoded; set both or neither.
+- **`Bundle`**, **`CSR`** — PEM-encoded intermediates and signing request.
+- **`Active`**, **`ForceHTTPS`**, **`HSTSMaxAge`** — pointers; unset fields are
+  not sent.
+
+### MailAccount
+
+`Mail` (`ListAccounts`, `GetAccount`, `CreateAccount`, `DeleteAccount` and one
+`Update…` method per setting). kascli: `mailaccounts` (`ma`).
+
+- **`Login`** — KAS-assigned, e.g. `m0123456`; the identifier.
+- **`LocalPart`**, **`Domain`** — the address.
+- **`CopyAddresses`** — receive a copy of incoming mail. `UpdateCopyAddresses`.
+- **`SenderAliases`** — addresses the mailbox may send as.
+  `UpdateSenderAliases`.
+- **`Responder`** — the autoresponder, see below. `UpdateResponder`.
+- **`State`** — `MailActive`, `MailReceiveDisabled` (no new mail, retrieval
+  still works) or `MailForbidden`. `UpdateState`.
+- **`AllowNets`** — clients allowed to access the mailbox: IP addresses, CIDR
+  networks or `webmail`. Empty means unrestricted. `UpdateAllowNets`.
+- **`WebmailAutologin`** — whether the KAS panel may open webmail without the
+  password. `UpdateWebmailAutologin`.
+- **`SpamFilters`** — *read-only*, names of the active standard filters.
+- **`InProgress`** — *read-only*.
+
+The password is passed to `CreateAccount` and `UpdatePassword`; it is never
+part of the object.
+
+### Responder
+
+Part of `MailAccount`.
+
+- **`Active`** — turns the responder on.
+- **`Start`**, **`End`** — limit it to a window. Set both or neither.
+- **`Text`** — the reply. Required for an active responder.
+- **`ContentType`** — `text` (the KAS default) or `html`.
+- **`DisplayName`** — sender name shown on the reply.
+
+### MailFilter
+
+`Mail` (`AvailableFilters`, `SetFilters`, `DeleteFilters`). kascli:
+`mailfilters` (`mfi`).
+
+- **`Name`** — a filter from `AvailableFilters`.
+- **`Action`** — for content filters only: `delete`, `mark`, `move=<folder>`
+  or `forward=<address>`.
+
+`MailFilterInfo` describes an available filter: `Name`, `Type`, `Title` and
+`Recommended`.
+
+### MailForward
+
+`Mail` (`ListForwards`, `GetForward`, `CreateForward`, `UpdateForward`,
+`DeleteForward`). kascli: `mailforwards` (`mf`).
+
+- **`LocalPart`**, **`Domain`** — the source address, which is the identifier.
+- **`Targets`** — one to ten addresses.
+- **`SpamFilters`**, **`InProgress`** — *read-only*.
+
+### FTPUser
+
+`FTP` (`List`, `Get`, `Create`, `Update`, `UpdatePassword`, `Delete`). kascli:
+`ftpusers` (`ftp`).
+
+- **`Login`** — KAS-assigned, e.g. `f0123456`; the identifier.
+- **`Path`** — directory the login is confined to; empty means `/`.
+- **`Comment`** — free text. KAS requires one.
+- **`Read`**, **`Write`**, **`List`** — the permissions. They are sent as
+  given, so the zero value grants nothing.
+- **`VirusScan`** — scans uploads with ClamAV.
+- **`MainUser`** — *read-only*. The account's own login, which cannot be
+  deleted.
+- **`InProgress`** — *read-only*.
+
+### Database
+
+`Databases` (`List`, `Get`, `Create`, `Update`, `UpdatePassword`, `Delete`).
+kascli: `databases` (`db`).
+
+- **`Login`**, **`Name`** — KAS-assigned and identical, e.g. `d0123456`.
+  `Login` is the identifier.
+- **`Comment`** — free text. KAS requires one.
+- **`AllowedHosts`** — hosts that may connect from outside: IP addresses or
+  CIDR networks. Empty closes external access.
+- **`UsedSpace`**, **`InProgress`** — *read-only*.
+
+### Cronjob
+
+`Cronjobs` (`List`, `Get`, `Create`, `Update`, `Delete`). kascli: `cronjobs`
+(`cj`).
+
+- **`ID`** — KAS-assigned; the identifier.
+- **`Comment`** — free text. KAS requires one.
+- **`Protocol`**, **`URL`** — `http` or `https`, and the address without the
+  protocol. A KAS cronjob requests a URL; it does not run a command.
+- **`Minute`**, **`Hour`**, **`DayOfMonth`**, **`Month`**, **`DayOfWeek`** —
+  the schedule: a number, `*`, or a step such as `*/15`. Empty is sent as `*`.
+- **`HTTPUser`**, **`HTTPPassword`** — HTTP basic auth. The password is
+  write-only, and `Update` sends the pair only when both are set, so a job
+  read with `Get` keeps its stored password when written back.
+- **`MailAddress`** — receives the output of each run.
+- **`MailCondition`** — no mail when the output contains this word.
+- **`MailSubject`** — `default` or `comment`.
+- **`Active`** — sent as given, so the zero value is an inactive job.
+
+### DDNSUser
+
+`DDNS` (`List`, `Get`, `Create`, `Update`, `UpdatePassword`, `Delete`). kascli:
+`ddnsusers` (`ddns`).
+
+- **`Login`** — KAS-assigned, e.g. `dyn0123456`; the identifier.
+- **`Zone`**, **`Label`** — the host the user controls, `Label.Zone`. Both are
+  fixed at creation. `Host()` returns the full name.
+- **`Comment`** — free text. KAS requires one.
+- **`TargetIP`** — the initial IPv4 address on create. Afterwards the DDNS
+  client sets it.
+- **`TargetIPv6`** — *read-only*; only the DDNS client sets it.
+- **`DualStack`** — lets the host carry an A and an AAAA record.
+
+### DNSRecord
+
+`DNS` (`List`, `Get`, `Create`, `Update`, `Delete`). kascli: `dnsrecords`
+(`dns`).
+
+- **`ID`** — KAS-assigned; the identifier.
+- **`Zone`**, **`Name`**, **`Type`**, **`Data`**, **`Aux`** — the record.
+  `Type` is fixed at creation; `Aux` holds the MX priority.
+- **`Changeable`**, **`Deletable`** — *read-only*. System records such as the
+  default NS entries are neither.
+
 ## TLS and Let's Encrypt
 
 `TLS.Update` installs a certificate you bring and sets the HTTPS redirect and
@@ -158,6 +330,10 @@ kascli create dnsrecord --zone example.com --name www --type A --data 203.0.113.
 kascli create subdomain --name go --domain example.com \
     --path https://example.org --redirect 301 --php 8.4
 kascli create ftpuser --path /logs/ --comment "log reader" --write=false
+kascli create database --comment shop --allowed-host 203.0.113.7
+kascli create cronjob --url example.com/cron.php --comment nightly --hour 3 --minute 30
+kascli create ddnsuser --zone example.com --label home --target-ip 203.0.113.4 \
+    --comment "at home"
 kascli update subdomain blog.example.com --php 8.4
 kascli update mailaccount m0123456 --responder on --responder-text "Back on Monday." \
     --responder-from 2026-12-24 --responder-until 2027-01-04
