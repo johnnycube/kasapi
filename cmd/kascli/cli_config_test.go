@@ -4,6 +4,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -157,5 +158,40 @@ func TestCLI_UsageErrors(t *testing.T) {
 	if err := run([]string{"get", "domains"}); err == nil ||
 		!strings.Contains(err.Error(), "no credentials") {
 		t.Fatalf("expected credentials error, got %v", err)
+	}
+}
+
+func TestCLI_ConfigTwoFactor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	t.Setenv("KASCONFIG", path)
+
+	capture(t, "config", "set-context", "prod", "--login", "w0123456", "--two-factor")
+	out := capture(t, "config", "view")
+	if !strings.Contains(out, "two-factor: true") {
+		t.Fatalf("view:\n%s", out)
+	}
+	out = capture(t, "config", "get-contexts", "-o", "wide")
+	if !strings.Contains(out, "TWO-FACTOR") || !strings.Contains(out, "true") {
+		t.Fatalf("get-contexts wide:\n%s", out)
+	}
+	if out := capture(t, "config", "get-contexts"); strings.Contains(out, "TWO-FACTOR") {
+		t.Fatalf("wide column leaked into the default table:\n%s", out)
+	}
+	if out := capture(t, "config", "get-contexts", "-o", "json"); !strings.Contains(out, `"twoFactor": true`) {
+		t.Fatalf("get-contexts json:\n%s", out)
+	}
+
+	// Patching another field keeps the flag; --two-factor=false clears it.
+	capture(t, "config", "set-context", "prod", "--auth-type", "plain")
+	if out := capture(t, "config", "view"); !strings.Contains(out, "two-factor: true") {
+		t.Fatalf("patching auth-type must keep two-factor:\n%s", out)
+	}
+	capture(t, "config", "set-context", "prod", "--two-factor=false")
+	if out := capture(t, "config", "view"); strings.Contains(out, "two-factor") {
+		t.Fatalf("two-factor not cleared:\n%s", out)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || strings.Contains(string(data), "two-factor") {
+		t.Fatalf("an unset flag must not be written: %v\n%s", err, data)
 	}
 }

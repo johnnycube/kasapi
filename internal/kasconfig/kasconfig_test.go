@@ -6,6 +6,7 @@ package kasconfig
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -114,5 +115,59 @@ func TestConfig_GetSetUnknownAndUpdate(t *testing.T) {
 	}
 	if _, err := cfg.Get("b"); err == nil || !strings.Contains(err.Error(), "a") {
 		t.Fatalf("error should list available contexts: %v", err)
+	}
+}
+
+func TestConfig_TwoFactorRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	cfg := &Config{}
+	cfg.Set(Context{Name: "secure", Login: "w1", TwoFactor: true})
+	cfg.Set(Context{Name: "plain", Login: "w2"})
+	if err := cfg.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(data), "two-factor") != 1 || !strings.Contains(string(data), "two-factor: true") {
+		t.Fatalf("file:\n%s", data)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	secure, _ := loaded.Get("secure")
+	plain, _ := loaded.Get("plain")
+	if !secure.TwoFactor || plain.TwoFactor {
+		t.Fatalf("two-factor lost: %+v %+v", secure, plain)
+	}
+
+	view := loaded.View(false)
+	var seen []any
+	for _, c := range view["contexts"].([]any) {
+		seen = append(seen, c.(map[string]any)["two-factor"])
+	}
+	if !reflect.DeepEqual(seen, []any{nil, true}) {
+		t.Fatalf("view: %#v", view["contexts"])
+	}
+}
+
+func TestConfig_LoadsFilesWithoutTwoFactor(t *testing.T) {
+	// A file written before the flag existed.
+	path := filepath.Join(t.TempDir(), "config")
+	old := "apiVersion: v1\nkind: Config\ncurrent-context: prod\ncontexts:\n  - name: prod\n    login: w0123456\n"
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	prod, err := cfg.Get("prod")
+	if err != nil || prod.TwoFactor || prod.Login != "w0123456" {
+		t.Fatalf("context: %+v %v", prod, err)
 	}
 }

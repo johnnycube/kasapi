@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"strconv"
 	"strings"
@@ -78,6 +79,14 @@ func entry(kv ...string) string {
 	}
 	b.WriteString("</item>")
 	return b.String()
+}
+
+// setStdin feeds input to the secret prompts of one test.
+func setStdin(t *testing.T, input string) {
+	t.Helper()
+	old := stdin
+	stdin = bufio.NewReader(strings.NewReader(input))
+	t.Cleanup(func() { stdin = old })
 }
 
 // wantParams fails the test unless got carries every key of want with the same value.

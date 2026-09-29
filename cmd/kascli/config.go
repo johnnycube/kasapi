@@ -62,15 +62,17 @@ func newConfigGetContextsCmd(g *globals) *cobra.Command {
 					authType = "sha1"
 				}
 				rows = append(rows, row{
-					name:  "context/" + c.Name,
-					cells: []string{current, c.Name, c.Login, authType},
+					name:      "context/" + c.Name,
+					cells:     []string{current, c.Name, c.Login, authType},
+					wideCells: []string{boolWord(c.TwoFactor)},
 					object: map[string]any{
 						"name": c.Name, "login": c.Login, "authType": authType,
-						"current": c.Name == cfg.CurrentContext,
+						"current":   c.Name == cfg.CurrentContext,
+						"twoFactor": c.TwoFactor,
 					},
 				})
 			}
-			return p.printList([]string{"CURRENT", "NAME", "LOGIN", "AUTH-TYPE"}, nil, rows)
+			return p.printList([]string{"CURRENT", "NAME", "LOGIN", "AUTH-TYPE"}, []string{"TWO-FACTOR"}, rows)
 		},
 	}
 }
@@ -125,6 +127,7 @@ func newConfigSetContextCmd(_ *globals) *cobra.Command {
 		password      string
 		passwordStdin bool
 		setCurrent    bool
+		twoFactor     bool
 	)
 	cmd := &cobra.Command{
 		Use:   "set-context NAME",
@@ -166,6 +169,9 @@ func newConfigSetContextCmd(_ *globals) *cobra.Command {
 				}
 				ctx.Password = strings.TrimRight(line, "\r\n")
 			}
+			if cmd.Flags().Changed("two-factor") {
+				ctx.TwoFactor = twoFactor
+			}
 			if ctx.Login == "" {
 				return fmt.Errorf("--login is required for a new context")
 			}
@@ -189,6 +195,7 @@ func newConfigSetContextCmd(_ *globals) *cobra.Command {
 	f.StringVar(&password, "password", "", "store the password in the config file (visible in shell history; prefer --password-stdin or KAS_PASSWORD)")
 	f.BoolVar(&passwordStdin, "password-stdin", false, "read the password to store from stdin")
 	f.BoolVar(&setCurrent, "current", false, "also switch current-context to this context")
+	f.BoolVar(&twoFactor, "two-factor", false, "the account uses two-factor authentication; ask for the one-time PIN on login")
 	return cmd
 }
 

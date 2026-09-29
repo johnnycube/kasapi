@@ -21,6 +21,8 @@ type Context struct {
 	Login    string
 	AuthType string // "sha1" (default) or "plain"
 	Password string // optional; prefer KAS_PASSWORD or interactive prompt
+	// TwoFactor makes kascli ask for the one-time PIN on login.
+	TwoFactor bool
 }
 
 // Config is the on-disk configuration.
@@ -53,10 +55,11 @@ type file struct {
 }
 
 type fileEntry struct {
-	Name     string `yaml:"name"`
-	Login    string `yaml:"login"`
-	AuthType string `yaml:"auth-type,omitempty"`
-	Password string `yaml:"password,omitempty"`
+	Name      string `yaml:"name"`
+	Login     string `yaml:"login"`
+	AuthType  string `yaml:"auth-type,omitempty"`
+	Password  string `yaml:"password,omitempty"`
+	TwoFactor bool   `yaml:"two-factor,omitempty"`
 }
 
 // Load reads the config file. A missing file yields an empty config, not an
@@ -116,6 +119,9 @@ func (c *Config) tree(redact bool) map[string]any {
 		m := map[string]any{"name": ctx.Name, "login": ctx.Login}
 		if ctx.AuthType != "" {
 			m["auth-type"] = ctx.AuthType
+		}
+		if ctx.TwoFactor {
+			m["two-factor"] = true
 		}
 		if ctx.Password != "" {
 			if redact {
