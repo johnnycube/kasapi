@@ -110,6 +110,22 @@ func subdomainEntry(name string) string {
 	)
 }
 
+func TestSubdomains_ListMapsAllFields(t *testing.T) {
+	c, _ := newFake(t, map[string]string{"get_subdomains": subdomainEntry("blog.example.com")})
+	subs, err := c.Subdomains.List(context.Background())
+	if err != nil || len(subs) != 1 {
+		t.Fatalf("List: %v %v", subs, err)
+	}
+	s := subs[0]
+	if s.FQDN != "blog.example.com" || s.Path != "https://example.org" || s.RedirectStatus != 301 ||
+		s.PHPVersion != "8.4" || s.PHPDeprecated || !s.Active || s.InProgress {
+		t.Fatalf("unexpected subdomain: %+v", s)
+	}
+	if !s.TLS.Active || !s.TLS.LetsEncrypt() || !s.TLS.ForceHTTPS || s.TLS.HSTSMaxAge != 300 {
+		t.Fatalf("unexpected TLS state: %+v", s.TLS)
+	}
+}
+
 func TestSubdomains_ListEmptyAndFault(t *testing.T) {
 	ctx := context.Background()
 	for _, answer := range []string{"", "!empty_list"} {
@@ -154,6 +170,83 @@ func TestSubdomains_GetFiltersOnTheServer(t *testing.T) {
 	}
 }
 
+func TestSubdomains_CreateSendsNoDefaultSettings(t *testing.T) {
+	c, rec := newFake(t, map[string]string{"add_subdomain": "shop.example.com"})
+	if err := c.Subdomains.Create(context.Background(), "shop", "example.com", ""); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	got := rec.last(t, "add_subdomain")
+	wantParams(t, got, map[string]string{"subdomain_name": "shop", "domain_name": "example.com"})
+	wantAbsent(t, got, "subdomain_path", "redirect_status", "php_version", "is_active")
+}
+
+func TestSubdomains_CreateWithSettings(t *testing.T) {
+	ctx := context.Background()
+	c, rec := newFake(t, map[string]string{"add_subdomain": "TRUE"})
+
+	err := c.Subdomains.CreateWithSettings(ctx, "go", "example.com", HostSettings{
+		Path: "https://example.org/landing", RedirectStatus: new(302), PHPVersion: "8.4",
+	})
+	if err != nil {
+		t.Fatalf("CreateWithSettings: %v", err)
+	}
+	wantParams(t, rec.last(t, "add_subdomain"), map[string]string{
+		"subdomain_name": "go", "domain_name": "example.com",
+		"subdomain_path": "https://example.org/landing", "redirect_status": "302", "php_version": "8.4",
+	})
+
+	before := rec.count("add_subdomain")
+	for name, tc := range map[string]struct {
+		sub, domain string
+		hs          HostSettings
+	}{
+		"no name":          {"", "example.com", HostSettings{}},
+		"no domain":        {"go", "", HostSettings{}},
+		"active on create": {"go", "example.com", HostSettings{Active: new(false)}},
+		"bad redirect":     {"go", "example.com", HostSettings{Path: "https://x", RedirectStatus: new(303)}},
+	} {
+		if err := c.Subdomains.CreateWithSettings(ctx, tc.sub, tc.domain, tc.hs); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+	if rec.count("add_subdomain") != before {
+		t.Fatal("invalid input must not reach the API")
+	}
+
+	c, _ = newFake(t, map[string]string{"add_subdomain": "!subdomain_exist_as_subdomain"})
+	err = c.Subdomains.CreateWithSettings(ctx, "go", "example.com", HostSettings{})
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || !strings.Contains(err.Error(), "creating subdomain go.example.com") {
+		t.Fatalf("fault must be returned with context, got %v", err)
+	}
+}
+
+func TestSubdomains_Update(t *testing.T) {
+	ctx := context.Background()
+	c, rec := newFake(t, map[string]string{"update_subdomain": "TRUE"})
+
+	if err := c.Subdomains.Update(ctx, "blog.example.com", HostSettings{PHPVersion: "8.4", Active: new(false)}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	got := rec.last(t, "update_subdomain")
+	wantParams(t, got, map[string]string{"subdomain_name": "blog.example.com", "php_version": "8.4", "is_active": "N"})
+	wantAbsent(t, got, "subdomain_path", "redirect_status")
+
+	before := rec.count("update_subdomain")
+	if err := c.Subdomains.Update(ctx, "", HostSettings{PHPVersion: "8.4"}); err == nil {
+		t.Error("Update without FQDN must fail")
+	}
+	if err := c.Subdomains.Update(ctx, "blog.example.com", HostSettings{}); err == nil {
+		t.Error("Update without settings must fail")
+	}
+	if err := c.Subdomains.Update(ctx, "blog.example.com", HostSettings{RedirectStatus: new(999)}); err == nil {
+		t.Error("Update with a bad redirect status must fail")
+	}
+	if rec.count("update_subdomain") != before {
+		t.Fatal("invalid input must not reach the API")
+	}
+}
+
 func TestSubdomains_UpdatePathFaults(t *testing.T) {
 	ctx := context.Background()
 
@@ -170,6 +263,38 @@ func TestSubdomains_UpdatePathFaults(t *testing.T) {
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || !strings.Contains(err.Error(), "updating subdomain blog.example.com") {
 		t.Fatalf("fault must be returned with context, got %v", err)
+	}
+}
+
+func TestSubdomains_UpdateFaults(t *testing.T) {
+	ctx := context.Background()
+	hs := HostSettings{PHPVersion: "8.4"}
+
+	c, _ := newFake(t, map[string]string{"update_subdomain": "!nothing_to_do"})
+	if err := c.Subdomains.Update(ctx, "blog.example.com", hs); err != nil {
+		t.Fatalf("nothing_to_do must be success, got %v", err)
+	}
+	c, _ = newFake(t, map[string]string{"update_subdomain": "!subdomain_doenst_exist"})
+	if err := c.Subdomains.Update(ctx, "gone.example.com", hs); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+	c, _ = newFake(t, map[string]string{"update_subdomain": "!in_progress"})
+	err := c.Subdomains.Update(ctx, "blog.example.com", hs)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != "in_progress" ||
+		!strings.Contains(err.Error(), "updating subdomain blog.example.com") {
+		t.Fatalf("fault must be returned with context, got %v", err)
+	}
+}
+
+func TestSubdomains_UpdatePathSendsEmptyPath(t *testing.T) {
+	c, rec := newFake(t, map[string]string{"update_subdomain": "TRUE"})
+	if err := c.Subdomains.UpdatePath(context.Background(), "blog.example.com", ""); err != nil {
+		t.Fatalf("UpdatePath: %v", err)
+	}
+	got := rec.last(t, "update_subdomain")
+	if v, ok := got["subdomain_path"]; !ok || v != "" {
+		t.Fatalf("the empty path must be sent, got %v", got)
 	}
 }
 

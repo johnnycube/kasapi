@@ -38,6 +38,12 @@ func (c *calls) last(t *testing.T, action string) map[string]any {
 	return all[len(all)-1]
 }
 
+func (c *calls) count(action string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.seen[action])
+}
+
 // newFake starts a fake KAS server; an answer starting with "!" is a fault.
 func newFake(t *testing.T, answers map[string]string) (*Client, *calls) {
 	t.Helper()
