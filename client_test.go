@@ -159,7 +159,7 @@ func TestNew_Validation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if c.cfg.SessionLifetime != 3600 {
+	if c.cfg.SessionLifetime != MaxSessionLifetime {
 		t.Fatalf("session lifetime not clamped: %d", c.cfg.SessionLifetime)
 	}
 }

@@ -39,6 +39,8 @@ type Server struct {
 
 	AuthCalls atomic.Int64
 	APICalls  atomic.Int64
+	// SessionLifetime is the session_lifetime of the latest KasAuth request.
+	SessionLifetime atomic.Int64
 
 	handler Handler
 }
@@ -92,6 +94,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		if s.OTP != "" && req["session_2fa"] != s.OTP {
 			s.WriteFault(w, "kas_2fa_incorrect")
 			return
+		}
+		if lifetime, ok := req["session_lifetime"].(float64); ok {
+			s.SessionLifetime.Store(int64(lifetime))
 		}
 		fmt.Fprint(w, Envelope(`<return xsi:type="xsd:string">`+s.Token+`</return>`))
 		return

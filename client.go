@@ -29,6 +29,9 @@ const (
 
 	apiNamespace  = "https://kasserver.com/soap/KasApi.php"
 	authNamespace = "https://kasserver.com/soap/KasAuth.php"
+
+	// MaxSessionLifetime is the longest session KAS grants, in seconds.
+	MaxSessionLifetime = 30000
 )
 
 // APIError is a KAS API error reported as a SOAP fault, e.g.
@@ -51,7 +54,7 @@ type Config struct {
 	// OTP supplies the one-time PIN for 2FA accounts on every session handshake.
 	OTP func(ctx context.Context) (string, error)
 
-	SessionLifetime int // seconds, max 3600; default 1800
+	SessionLifetime int // seconds, 1-30000; default 1800
 	UserAgent       string
 
 	// HTTPClient overrides the default (TLS >= 1.2, 60s timeout). A custom
@@ -93,8 +96,8 @@ func New(cfg Config) (*Client, error) {
 	if cfg.SessionLifetime <= 0 {
 		cfg.SessionLifetime = 1800
 	}
-	if cfg.SessionLifetime > 3600 {
-		cfg.SessionLifetime = 3600
+	if cfg.SessionLifetime > MaxSessionLifetime {
+		cfg.SessionLifetime = MaxSessionLifetime
 	}
 	if cfg.UserAgent == "" {
 		cfg.UserAgent = "kasapi-go"

@@ -12,6 +12,23 @@ import (
 	"github.com/johnnycube/kasapi/kasapitest"
 )
 
+func TestAuth_SessionLifetimeIsSent(t *testing.T) {
+	srv := kasapitest.New(t, func(string, map[string]any) (string, string) { return "TRUE", "" })
+	c, err := New(Config{
+		Login: "w0123456", Password: "secret", SessionLifetime: 7200,
+		APIEndpoint: srv.APIURL(), AuthEndpoint: srv.AuthURL(), HTTPClient: srv.Client(),
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := c.Exec(context.Background(), "noop", nil); err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if got := srv.SessionLifetime.Load(); got != 7200 {
+		t.Fatalf("session_lifetime sent as %d, want 7200", got)
+	}
+}
+
 func TestAuth_OTP(t *testing.T) {
 	ctx := context.Background()
 	srv := kasapitest.New(t, func(string, map[string]any) (string, string) { return "TRUE", "" })
