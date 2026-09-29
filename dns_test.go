@@ -127,6 +127,17 @@ func dnsEntry(id, name, typ, data, aux string) string {
 	)
 }
 
+func TestNormalizeZone(t *testing.T) {
+	for in, want := range map[string]string{
+		"example.com": "example.com.", "example.com.": "example.com.",
+		"  example.com ": "example.com.", "": "",
+	} {
+		if got := normalizeZone(in); got != want {
+			t.Errorf("normalizeZone(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestDNS_ListMapsAllFields(t *testing.T) {
 	c, rec := newFake(t, map[string]string{"get_dns_settings": dnsEntry("7", "mail", "MX", "mx.example.com.", "10")})
 	records, err := c.DNS.List(context.Background(), "example.com")
@@ -186,6 +197,61 @@ func TestDNS_GetFiltersOnTheServer(t *testing.T) {
 	if _, err := c.DNS.Get(ctx, "example.com", "9"); err == nil || errors.Is(err, ErrNotFound) ||
 		!strings.Contains(err.Error(), "reading DNS record 9") {
 		t.Fatalf("other faults must be returned with context, got %v", err)
+	}
+}
+
+func TestDNS_CreateReturnsID(t *testing.T) {
+	c, rec := newFake(t, map[string]string{"add_dns_settings": "123456789"})
+	id, err := c.DNS.Create(context.Background(), DNSRecord{
+		Zone: "example.com", Name: "_acme-challenge", Type: "txt", Data: "token", Aux: 0,
+	})
+	if err != nil || id != "123456789" {
+		t.Fatalf("Create: %q %v", id, err)
+	}
+	wantParams(t, rec.last(t, "add_dns_settings"), map[string]string{
+		"zone_host": "example.com.", "record_type": "TXT", "record_name": "_acme-challenge",
+		"record_data": "token", "record_aux": "0",
+	})
+	if rec.count("get_dns_settings") != 0 {
+		t.Fatal("an id in the response needs no lookup")
+	}
+}
+
+func TestDNS_CreateFallsBackToLookup(t *testing.T) {
+	ctx := context.Background()
+	rec := DNSRecord{Zone: "example.com", Name: "www", Type: "a", Data: "203.0.113.1"}
+
+	// KAS answers TRUE: the id comes from re-reading the zone.
+	c, _ := newFake(t, map[string]string{
+		"add_dns_settings": "TRUE",
+		"get_dns_settings": dnsEntry("1", "mail", "A", "203.0.113.1", "0") + dnsEntry("2", "www", "A", "203.0.113.1", "0"),
+	})
+	id, err := c.DNS.Create(ctx, rec)
+	if err != nil || id != "2" {
+		t.Fatalf("Create: %q %v", id, err)
+	}
+
+	// The record is not in the zone afterwards.
+	c, _ = newFake(t, map[string]string{
+		"add_dns_settings": "TRUE",
+		"get_dns_settings": dnsEntry("1", "mail", "A", "203.0.113.1", "0"),
+	})
+	if _, err := c.DNS.Create(ctx, rec); err == nil || !strings.Contains(err.Error(), "not found in zone") {
+		t.Fatalf("expected a lookup miss, got %v", err)
+	}
+
+	// The lookup itself fails.
+	c, _ = newFake(t, map[string]string{"add_dns_settings": "TRUE", "get_dns_settings": "!kas_error"})
+	if _, err := c.DNS.Create(ctx, rec); err == nil || !strings.Contains(err.Error(), "id lookup failed") {
+		t.Fatalf("expected a lookup failure, got %v", err)
+	}
+
+	// The create fails.
+	c, _ = newFake(t, map[string]string{"add_dns_settings": "!record_already_exists"})
+	_, err = c.DNS.Create(ctx, rec)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != "record_already_exists" {
+		t.Fatalf("expected the fault, got %v", err)
 	}
 }
 

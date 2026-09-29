@@ -346,6 +346,20 @@ func TestMailStateFrom(t *testing.T) {
 	}
 }
 
+func TestMail_PasswordIsNotMapped(t *testing.T) {
+	c, _ := newFake(t, map[string]string{"get_mailaccounts": mailEntry("m1", "info@example.com")})
+	a, err := c.Mail.GetAccount(context.Background(), "m1")
+	if err != nil {
+		t.Fatalf("GetAccount: %v", err)
+	}
+	v := reflect.ValueOf(*a)
+	for i := range v.NumField() {
+		if f := v.Field(i); f.Kind() == reflect.String && strings.Contains(f.String(), "plaintext-password") {
+			t.Fatalf("field %s carries the mailbox password", v.Type().Field(i).Name)
+		}
+	}
+}
+
 func TestMail_GetAccountFiltersOnTheServer(t *testing.T) {
 	ctx := context.Background()
 	c, rec := newFake(t, map[string]string{"get_mailaccounts": mailEntry("m1", "info@example.com")})
@@ -414,6 +428,33 @@ func TestMail_CreateAccountSendsResponderAndAllowNets(t *testing.T) {
 	}
 	if rec.count("add_mailaccount") != before {
 		t.Fatal("invalid input must not reach the API")
+	}
+}
+
+func TestMail_CreateAccountFallsBackToLookup(t *testing.T) {
+	ctx := context.Background()
+	a := MailAccount{LocalPart: "Info", Domain: "example.com"}
+
+	c, _ := newFake(t, map[string]string{
+		"add_mailaccount":  "TRUE",
+		"get_mailaccounts": mailEntry("m1", "other@example.com") + mailEntry("m2", "info@example.com"),
+	})
+	login, err := c.Mail.CreateAccount(ctx, a, "p")
+	if err != nil || login != "m2" {
+		t.Fatalf("CreateAccount: %q %v", login, err)
+	}
+
+	c, _ = newFake(t, map[string]string{"add_mailaccount": "TRUE", "get_mailaccounts": mailEntry("m1", "other@example.com")})
+	if _, err := c.Mail.CreateAccount(ctx, a, "p"); err == nil || !strings.Contains(err.Error(), "not found afterwards") {
+		t.Fatalf("expected a lookup miss, got %v", err)
+	}
+	c, _ = newFake(t, map[string]string{"add_mailaccount": "TRUE", "get_mailaccounts": "!kas_error"})
+	if _, err := c.Mail.CreateAccount(ctx, a, "p"); err == nil || !strings.Contains(err.Error(), "login lookup failed") {
+		t.Fatalf("expected a lookup failure, got %v", err)
+	}
+	c, _ = newFake(t, map[string]string{"add_mailaccount": "!email_already_exists"})
+	if _, err := c.Mail.CreateAccount(ctx, a, "p"); err == nil || !strings.Contains(err.Error(), "creating mail account Info@example.com") {
+		t.Fatalf("fault must be returned with context, got %v", err)
 	}
 }
 
@@ -799,5 +840,60 @@ func TestMail_ForwardFaults(t *testing.T) {
 	}
 	if err := c.Mail.UpdateForward(ctx, MailForward{LocalPart: "x y", Domain: "example.com", Targets: fw.Targets}); err == nil {
 		t.Error("UpdateForward with an invalid source must fail")
+	}
+}
+
+func TestMail_DeleteAccountFault(t *testing.T) {
+	c, _ := newFake(t, map[string]string{"delete_mailaccount": "!in_progress"})
+	err := c.Mail.DeleteAccount(context.Background(), "m1")
+	if err == nil || errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "deleting mail account m1") {
+		t.Fatalf("fault must be returned with context, got %v", err)
+	}
+}
+
+func TestMailValidators(t *testing.T) {
+	if err := validateAddrParts("info", "example.com"); err != nil {
+		t.Fatalf("valid address: %v", err)
+	}
+	for _, tc := range [][2]string{{"", "example.com"}, {"info", ""}, {"a b", "example.com"}, {"info", "exa mple.com"}} {
+		if err := validateAddrParts(tc[0], tc[1]); err == nil {
+			t.Errorf("%q@%q must be rejected", tc[0], tc[1])
+		}
+	}
+	if err := validateTargets([]string{"a@example.org"}); err != nil {
+		t.Fatalf("valid targets: %v", err)
+	}
+	if err := validateTargets(nil); err == nil {
+		t.Error("no targets must be rejected")
+	}
+	if err := validateAddressList("copy address", nil); err != nil {
+		t.Fatalf("empty list: %v", err)
+	}
+	if err := validateAddressList("copy address", []string{"a@example.org", "nope"}); err == nil ||
+		!strings.Contains(err.Error(), "copy address") {
+		t.Errorf("invalid entry: %v", err)
+	}
+
+	params := map[string]any{}
+	addTargetParams(params, []string{"a@example.org", "b@example.org"})
+	if !reflect.DeepEqual(params, map[string]any{"target_0": "a@example.org", "target_1": "b@example.org"}) {
+		t.Fatalf("addTargetParams: %#v", params)
+	}
+	if got := (MailForward{LocalPart: "a", Domain: "example.com"}).Source(); got != "a@example.com" {
+		t.Fatalf("Source(): %q", got)
+	}
+}
+
+func TestMail_ValidationBeforeRequest(t *testing.T) {
+	ctx := context.Background()
+	c, rec := newFake(t, map[string]string{})
+	if err := c.Mail.UpdateCopyAddresses(ctx, "m1", []string{"not an address"}); err == nil {
+		t.Error("an invalid copy address must fail")
+	}
+	if err := c.Mail.CreateForward(ctx, MailForward{LocalPart: "x y", Domain: "example.com", Targets: []string{"a@example.org"}}); err == nil {
+		t.Error("an invalid forward source must fail")
+	}
+	if n := rec.count("update_mailaccount") + rec.count("add_mailforward"); n != 0 {
+		t.Fatalf("invalid input must not reach the API, got %d calls", n)
 	}
 }

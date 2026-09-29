@@ -100,3 +100,66 @@ func TestSplitAddressList(t *testing.T) {
 		t.Fatal("empty input should yield nil")
 	}
 }
+
+func TestToValue_Shapes(t *testing.T) {
+	parse := func(raw string) any {
+		t.Helper()
+		root, err := parseXMLTree([]byte(raw))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		return root.find("return").toValue()
+	}
+
+	// Struct-like children map by element name; repeated names collect.
+	got := parse(`<r><return><a>1</a><b>2</b><b>3</b><b>4</b></return></r>`)
+	want := map[string]any{"a": "1", "b": []any{"2", "3", "4"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("struct shape: got %#v, want %#v", got, want)
+	}
+
+	// An <item> with a key but no value maps to the empty string.
+	got = parse(`<r><return><item><key>k</key></item></return></r>`)
+	if !reflect.DeepEqual(got, map[string]any{"k": ""}) {
+		t.Fatalf("key without value: %#v", got)
+	}
+
+	// Mixed keyed and keyless items are a list, not a map.
+	got = parse(`<r><return><item><key>k</key><value>v</value></item><item>plain</item></return></r>`)
+	list, ok := got.([]any)
+	if !ok || len(list) != 2 || list[1] != "plain" {
+		t.Fatalf("mixed items: %#v", got)
+	}
+
+	// Nested maps inside list entries.
+	got = parse(`<r><return><item><item><key>k</key><value><item><key>n</key><value>1</value></item></value></item></item></return></r>`)
+	want2 := []any{map[string]any{"k": map[string]any{"n": "1"}}}
+	if !reflect.DeepEqual(got, want2) {
+		t.Fatalf("nested: got %#v, want %#v", got, want2)
+	}
+}
+
+func TestXMLNodeHelpers(t *testing.T) {
+	root, err := parseXMLTree([]byte(`<a><b>text</b><c><d>deep</d></c></a>`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	a := root.find("a")
+	if a.childText("b") != "text" || a.childText("missing") != "" {
+		t.Fatalf("childText: %q %q", a.childText("b"), a.childText("missing"))
+	}
+	if root.find("d") == nil || root.find("d").text != "deep" {
+		t.Fatal("find must search depth-first")
+	}
+	if root.find("nope") != nil {
+		t.Fatal("find of a missing element must be nil")
+	}
+	leaf := &xmlNode{name: "leaf"}
+	if isKeyValueMap(leaf) || allNamed(leaf, "item") {
+		t.Fatal("a node without children is neither map nor list")
+	}
+	// Unbalanced documents are an error, not a partial tree.
+	if _, err := parseXMLTree([]byte(`</x><y>1</y>`)); err == nil {
+		t.Fatal("a stray end tag must fail")
+	}
+}
