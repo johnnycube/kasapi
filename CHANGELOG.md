@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.1 — 2026-09-29
+
+Documentation only. The README gains a reference of every object: its
+service and methods, the `kascli` resource and its fields. No code changes.
+
 ## v0.3.0 — 2026-09-29
 
 New services and settings in the library, write verbs for `kascli`, and tests
