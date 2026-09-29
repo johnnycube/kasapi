@@ -80,6 +80,7 @@ type Client struct {
 	Subdomains *SubdomainService
 	Domains    *DomainService
 	TLS        *TLSService
+	FTP        *FTPService
 }
 
 // New creates a configured Client.
@@ -127,6 +128,7 @@ func New(cfg Config) (*Client, error) {
 	c.Subdomains = &SubdomainService{c: c}
 	c.Domains = &DomainService{c: c}
 	c.TLS = &TLSService{c: c}
+	c.FTP = &FTPService{c: c}
 	return c, nil
 }
 
