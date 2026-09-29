@@ -82,6 +82,7 @@ type Client struct {
 	TLS        *TLSService
 	FTP        *FTPService
 	Databases  *DatabaseService
+	Cronjobs   *CronjobService
 }
 
 // New creates a configured Client.
@@ -131,6 +132,7 @@ func New(cfg Config) (*Client, error) {
 	c.TLS = &TLSService{c: c}
 	c.FTP = &FTPService{c: c}
 	c.Databases = &DatabaseService{c: c}
+	c.Cronjobs = &CronjobService{c: c}
 	return c, nil
 }
 
