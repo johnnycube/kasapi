@@ -1,10 +1,10 @@
 # Changelog
 
-## Unreleased
+## v0.3.0 — 2026-09-29
 
-Seven additions to the library, write verbs for `kascli`, and tests for every
-function. Two behaviors change for existing callers; both are listed under
-"Changed".
+New services and settings in the library, write verbs for `kascli`, and tests
+for every function. "Changed" lists what behaves differently for existing
+callers.
 
 Library:
 
