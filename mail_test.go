@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/johnnycube/kasapi/kasapitest"
@@ -259,5 +260,124 @@ func TestMail_ForwardCRUD(t *testing.T) {
 	}
 	if err := c.Mail.DeleteForward(ctx, "nope@example.com"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+// mailEntry is a get_mailaccounts entry as KAS sends it, password included.
+func mailEntry(login, address string, extra ...string) string {
+	kv := []string{
+		"mail_login", login,
+		"mail_password", "plaintext-password",
+		"mail_adresses", address,
+		"mail_responder", "N",
+		"mail_responder_text", "",
+		"mail_responder_displayname", "Info",
+		"mail_responder_content_type", "text",
+		"mail_copy_adress", "",
+		"mail_sender_alias", "",
+		"mail_spamfilter", "sf,ef,pdw,",
+		"in_progress", "FALSE",
+		"mail_is_active", "Y",
+		"mail_allow_nets", "",
+		"webmail_autologin", "Y",
+	}
+	return entry(append(kv, extra...)...)
+}
+
+func TestMail_GetAccountFiltersOnTheServer(t *testing.T) {
+	ctx := context.Background()
+	c, rec := newFake(t, map[string]string{"get_mailaccounts": mailEntry("m1", "info@example.com")})
+	if _, err := c.Mail.GetAccount(ctx, "m1"); err != nil {
+		t.Fatalf("GetAccount: %v", err)
+	}
+	wantParams(t, rec.last(t, "get_mailaccounts"), map[string]string{"mail_login": "m1"})
+	if _, err := c.Mail.GetAccount(ctx, ""); err == nil {
+		t.Fatal("GetAccount without login must fail")
+	}
+
+	c, _ = newFake(t, map[string]string{"get_mailaccounts": "!mail_login_not_found"})
+	if _, err := c.Mail.GetAccount(ctx, "m9"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+	c, _ = newFake(t, map[string]string{"get_mailaccounts": "!kas_error"})
+	if _, err := c.Mail.GetAccount(ctx, "m1"); err == nil || errors.Is(err, ErrNotFound) ||
+		!strings.Contains(err.Error(), "reading mail account m1") {
+		t.Fatalf("fault must be returned with context, got %v", err)
+	}
+	if _, err := c.Mail.ListAccounts(ctx); err == nil || !strings.Contains(err.Error(), "listing mail accounts") {
+		t.Fatalf("ListAccounts fault: %v", err)
+	}
+	c, _ = newFake(t, map[string]string{"get_mailaccounts": "!empty_list"})
+	if accounts, err := c.Mail.ListAccounts(ctx); err != nil || len(accounts) != 0 {
+		t.Fatalf("empty list: %v %v", accounts, err)
+	}
+}
+
+// checkUpdateFaults runs each update against "nothing_to_do" and a real fault.
+func checkUpdateFaults(t *testing.T, updates map[string]func(*Client) error) {
+	t.Helper()
+	for name, run := range updates {
+		c, _ := newFake(t, map[string]string{"update_mailaccount": "!nothing_to_do"})
+		if err := run(c); err != nil {
+			t.Errorf("%s: nothing_to_do must be success, got %v", name, err)
+		}
+		c, _ = newFake(t, map[string]string{"update_mailaccount": "!in_progress"})
+		err := run(c)
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.Code != "in_progress" || !strings.Contains(err.Error(), "mail account m1") {
+			t.Errorf("%s: fault must be returned with context, got %v", name, err)
+		}
+	}
+}
+
+func TestMail_UpdateFaults(t *testing.T) {
+	ctx := context.Background()
+	checkUpdateFaults(t, map[string]func(*Client) error{
+		"UpdatePassword":      func(c *Client) error { return c.Mail.UpdatePassword(ctx, "m1", "pw") },
+		"UpdateCopyAddresses": func(c *Client) error { return c.Mail.UpdateCopyAddresses(ctx, "m1", []string{"a@example.org"}) },
+		"UpdateSenderAliases": func(c *Client) error { return c.Mail.UpdateSenderAliases(ctx, "m1", nil) },
+	})
+}
+
+func TestMail_ForwardFaults(t *testing.T) {
+	ctx := context.Background()
+	fw := MailForward{LocalPart: "sales", Domain: "example.com", Targets: []string{"a@example.org"}}
+
+	c, _ := newFake(t, map[string]string{
+		"get_mailforwards": "!kas_error", "add_mailforward": "!max_emails_reached",
+		"update_mailforward": "!nothing_to_do", "delete_mailforward": "!in_progress",
+	})
+	if _, err := c.Mail.ListForwards(ctx); err == nil || !strings.Contains(err.Error(), "listing mail forwards") {
+		t.Errorf("ListForwards fault: %v", err)
+	}
+	if _, err := c.Mail.GetForward(ctx, fw.Source()); err == nil || errors.Is(err, ErrNotFound) ||
+		!strings.Contains(err.Error(), "reading mail forward sales@example.com") {
+		t.Errorf("GetForward fault: %v", err)
+	}
+	if err := c.Mail.CreateForward(ctx, fw); err == nil || !strings.Contains(err.Error(), "creating mail forward") {
+		t.Errorf("CreateForward fault: %v", err)
+	}
+	if err := c.Mail.UpdateForward(ctx, fw); err != nil {
+		t.Errorf("UpdateForward: nothing_to_do must be success, got %v", err)
+	}
+	if err := c.Mail.DeleteForward(ctx, fw.Source()); err == nil || errors.Is(err, ErrNotFound) ||
+		!strings.Contains(err.Error(), "deleting mail forward") {
+		t.Errorf("DeleteForward fault: %v", err)
+	}
+
+	c, _ = newFake(t, map[string]string{
+		"get_mailforwards": "!empty_list", "update_mailforward": "!mail_forward_syntax_incorrect",
+	})
+	if forwards, err := c.Mail.ListForwards(ctx); err != nil || len(forwards) != 0 {
+		t.Errorf("ListForwards empty: %v %v", forwards, err)
+	}
+	if _, err := c.Mail.GetForward(ctx, fw.Source()); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetForward on an empty list: expected ErrNotFound, got %v", err)
+	}
+	if err := c.Mail.UpdateForward(ctx, fw); err == nil || !strings.Contains(err.Error(), "updating mail forward") {
+		t.Errorf("UpdateForward fault: %v", err)
+	}
+	if err := c.Mail.UpdateForward(ctx, MailForward{LocalPart: "x y", Domain: "example.com", Targets: fw.Targets}); err == nil {
+		t.Error("UpdateForward with an invalid source must fail")
 	}
 }

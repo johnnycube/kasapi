@@ -5,6 +5,7 @@ package kasapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -22,41 +23,41 @@ type Domain struct {
 	Path string // document root path relative to the account root
 }
 
+func domainFrom(m map[string]any) Domain {
+	return Domain{
+		Name: asString(m["domain_name"]),
+		Path: asString(m["domain_path"]),
+	}
+}
+
 // List returns all domains of the KAS account.
 func (s *DomainService) List(ctx context.Context) ([]Domain, error) {
-	ret, err := s.c.Exec(ctx, "get_domains", map[string]any{})
+	items, err := s.c.list(ctx, "get_domains", map[string]any{})
 	if err != nil {
 		return nil, fmt.Errorf("listing domains: %w", err)
 	}
-
-	items, ok := ret.([]any)
-	if !ok {
-		return nil, nil
-	}
-
 	domains := make([]Domain, 0, len(items))
-	for _, it := range items {
-		m, ok := it.(map[string]any)
-		if !ok {
-			continue
-		}
-		domains = append(domains, Domain{
-			Name: asString(m["domain_name"]),
-			Path: asString(m["domain_path"]),
-		})
+	for _, m := range items {
+		domains = append(domains, domainFrom(m))
 	}
 	return domains, nil
 }
 
 // Get returns the domain with the given name, or ErrNotFound.
 func (s *DomainService) Get(ctx context.Context, name string) (*Domain, error) {
-	domains, err := s.List(ctx)
-	if err != nil {
-		return nil, err
+	if name == "" {
+		return nil, errors.New("kasapi: domain name must not be empty")
 	}
-	for i := range domains {
-		if strings.EqualFold(domains[i].Name, name) {
-			return &domains[i], nil
+	items, err := s.c.getOne(ctx, "get_domains", map[string]any{"domain_name": name})
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("reading domain %s: %w", name, err)
+	}
+	for _, m := range items {
+		if d := domainFrom(m); strings.EqualFold(d.Name, name) {
+			return &d, nil
 		}
 	}
 	return nil, ErrNotFound

@@ -41,6 +41,22 @@ type MailAccount struct {
 	ResponderActive bool
 }
 
+func mailAccountFrom(m map[string]any) MailAccount {
+	acc := MailAccount{
+		Login:           asString(m["mail_login"]),
+		ResponderActive: asString(m["mail_responder"]) == "Y",
+		CopyAddresses:   splitAddressList(asString(m["mail_copy_adress"])),
+		SenderAliases:   splitAddressList(asString(m["mail_sender_alias"])),
+	}
+	// mail_adresses lists the addresses bound to the account.
+	if addrs := splitAddressList(asString(m["mail_adresses"])); len(addrs) > 0 {
+		if lp, dom, ok := strings.Cut(addrs[0], "@"); ok {
+			acc.LocalPart, acc.Domain = lp, dom
+		}
+	}
+	return acc
+}
+
 // Address returns the primary address local@domain.
 func (a MailAccount) Address() string {
 	return a.LocalPart + "@" + a.Domain
@@ -86,48 +102,32 @@ func validateAddressList(kind string, addrs []string) error {
 
 // ListAccounts returns all mail accounts of the KAS account.
 func (s *MailService) ListAccounts(ctx context.Context) ([]MailAccount, error) {
-	ret, err := s.c.Exec(ctx, "get_mailaccounts", map[string]any{})
+	items, err := s.c.list(ctx, "get_mailaccounts", map[string]any{})
 	if err != nil {
 		return nil, fmt.Errorf("listing mail accounts: %w", err)
 	}
-
-	items, ok := ret.([]any)
-	if !ok {
-		return nil, nil
-	}
-
 	accounts := make([]MailAccount, 0, len(items))
-	for _, it := range items {
-		m, ok := it.(map[string]any)
-		if !ok {
-			continue
-		}
-		acc := MailAccount{
-			Login:           asString(m["mail_login"]),
-			ResponderActive: asString(m["mail_responder"]) == "Y",
-			CopyAddresses:   splitAddressList(asString(m["mail_copy_adress"])),
-			SenderAliases:   splitAddressList(asString(m["mail_sender_alias"])),
-		}
-		// mail_adresses lists the addresses bound to the account.
-		if addrs := splitAddressList(asString(m["mail_adresses"])); len(addrs) > 0 {
-			if lp, dom, ok := strings.Cut(addrs[0], "@"); ok {
-				acc.LocalPart, acc.Domain = lp, dom
-			}
-		}
-		accounts = append(accounts, acc)
+	for _, m := range items {
+		accounts = append(accounts, mailAccountFrom(m))
 	}
 	return accounts, nil
 }
 
 // GetAccount returns the account with the given KAS login, or ErrNotFound.
 func (s *MailService) GetAccount(ctx context.Context, login string) (*MailAccount, error) {
-	accounts, err := s.ListAccounts(ctx)
-	if err != nil {
-		return nil, err
+	if login == "" {
+		return nil, errors.New("kasapi: mail login must not be empty")
 	}
-	for i := range accounts {
-		if accounts[i].Login == login {
-			return &accounts[i], nil
+	items, err := s.c.getOne(ctx, "get_mailaccounts", map[string]any{"mail_login": login})
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("reading mail account %s: %w", login, err)
+	}
+	for _, m := range items {
+		if acc := mailAccountFrom(m); acc.Login == login {
+			return &acc, nil
 		}
 	}
 	return nil, ErrNotFound
@@ -195,7 +195,7 @@ func (s *MailService) UpdatePassword(ctx context.Context, login, newPassword str
 		"mail_login":        login,
 		"mail_new_password": newPassword,
 	})
-	if err != nil {
+	if err != nil && !isNothingToDo(err) {
 		return fmt.Errorf("updating password of mail account %s: %w", login, err)
 	}
 	return nil
@@ -214,7 +214,7 @@ func (s *MailService) UpdateCopyAddresses(ctx context.Context, login string, cop
 		"mail_login":  login,
 		"copy_adress": strings.Join(copyAddresses, ","),
 	})
-	if err != nil {
+	if err != nil && !isNothingToDo(err) {
 		return fmt.Errorf("updating copy addresses of mail account %s: %w", login, err)
 	}
 	return nil
@@ -235,7 +235,7 @@ func (s *MailService) UpdateSenderAliases(ctx context.Context, login string, ali
 		"mail_login":        login,
 		"mail_sender_alias": strings.Join(aliases, ","),
 	})
-	if err != nil {
+	if err != nil && !isNothingToDo(err) {
 		return fmt.Errorf("updating sender aliases of mail account %s: %w", login, err)
 	}
 	return nil
@@ -268,46 +268,46 @@ type MailForward struct {
 	Targets   []string
 }
 
+func mailForwardFrom(m map[string]any) MailForward {
+	fw := MailForward{
+		Targets: splitAddressList(asString(m["mail_forward_targets"])),
+	}
+	if lp, dom, ok := strings.Cut(asString(m["mail_forward_adress"]), "@"); ok {
+		fw.LocalPart, fw.Domain = lp, dom
+	}
+	return fw
+}
+
 func (f MailForward) Source() string { return f.LocalPart + "@" + f.Domain }
 
 // ListForwards returns all mail forwards of the KAS account.
 func (s *MailService) ListForwards(ctx context.Context) ([]MailForward, error) {
-	ret, err := s.c.Exec(ctx, "get_mailforwards", map[string]any{})
+	items, err := s.c.list(ctx, "get_mailforwards", map[string]any{})
 	if err != nil {
 		return nil, fmt.Errorf("listing mail forwards: %w", err)
 	}
-
-	items, ok := ret.([]any)
-	if !ok {
-		return nil, nil
-	}
-
 	forwards := make([]MailForward, 0, len(items))
-	for _, it := range items {
-		m, ok := it.(map[string]any)
-		if !ok {
-			continue
-		}
-		fw := MailForward{
-			Targets: splitAddressList(asString(m["mail_forward_targets"])),
-		}
-		if lp, dom, ok := strings.Cut(asString(m["mail_forward_adress"]), "@"); ok {
-			fw.LocalPart, fw.Domain = lp, dom
-		}
-		forwards = append(forwards, fw)
+	for _, m := range items {
+		forwards = append(forwards, mailForwardFrom(m))
 	}
 	return forwards, nil
 }
 
 // GetForward returns the forward for source (local@domain), or ErrNotFound.
 func (s *MailService) GetForward(ctx context.Context, source string) (*MailForward, error) {
-	forwards, err := s.ListForwards(ctx)
-	if err != nil {
-		return nil, err
+	if source == "" {
+		return nil, errors.New("kasapi: forward source must not be empty")
 	}
-	for i := range forwards {
-		if strings.EqualFold(forwards[i].Source(), source) {
-			return &forwards[i], nil
+	items, err := s.c.getOne(ctx, "get_mailforwards", map[string]any{"mail_forward": source})
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("reading mail forward %s: %w", source, err)
+	}
+	for _, m := range items {
+		if fw := mailForwardFrom(m); strings.EqualFold(fw.Source(), source) {
+			return &fw, nil
 		}
 	}
 	return nil, ErrNotFound
@@ -346,7 +346,7 @@ func (s *MailService) UpdateForward(ctx context.Context, f MailForward) error {
 	}
 	addTargetParams(params, f.Targets)
 	_, err := s.c.Exec(ctx, "update_mailforward", params)
-	if err != nil {
+	if err != nil && !isNothingToDo(err) {
 		return fmt.Errorf("updating mail forward %s: %w", f.Source(), err)
 	}
 	return nil
@@ -374,19 +374,7 @@ func (s *MailService) DeleteForward(ctx context.Context, source string) error {
 
 // splitAddressList splits KAS address lists, which use ";" or "," depending on
 // the action, and trims empties.
-func splitAddressList(s string) []string {
-	if s == "" {
-		return nil
-	}
-	fields := strings.FieldsFunc(s, func(r rune) bool { return r == ';' || r == ',' })
-	out := make([]string, 0, len(fields))
-	for _, f := range fields {
-		if f = strings.TrimSpace(f); f != "" {
-			out = append(out, f)
-		}
-	}
-	return out
-}
+func splitAddressList(s string) []string { return splitList(s) }
 
 // addTargetParams sets target_0..target_9 as expected by the forward actions.
 func addTargetParams(params map[string]any, targets []string) {

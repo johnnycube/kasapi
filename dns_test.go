@@ -6,6 +6,7 @@ package kasapi
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/johnnycube/kasapi/kasapitest"
@@ -115,5 +116,112 @@ func TestDNS_GetUpdateDelete(t *testing.T) {
 	}
 	if err := c.DNS.Delete(ctx, "99"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for unknown id, got %v", err)
+	}
+}
+
+func dnsEntry(id, name, typ, data, aux string) string {
+	return entry(
+		"record_zone", "example.com",
+		"record_name", name, "record_type", typ, "record_data", data, "record_aux", aux,
+		"record_id", id, "record_changeable", "Y", "record_deleteable", "N",
+	)
+}
+
+func TestDNS_ListMapsAllFields(t *testing.T) {
+	c, rec := newFake(t, map[string]string{"get_dns_settings": dnsEntry("7", "mail", "MX", "mx.example.com.", "10")})
+	records, err := c.DNS.List(context.Background(), "example.com")
+	if err != nil || len(records) != 1 {
+		t.Fatalf("List: %v %v", records, err)
+	}
+	want := DNSRecord{
+		ID: "7", Zone: "example.com", Name: "mail", Type: "MX", Data: "mx.example.com.",
+		Aux: 10, Changeable: true, Deletable: false,
+	}
+	if records[0] != want {
+		t.Fatalf("got %+v, want %+v", records[0], want)
+	}
+	wantParams(t, rec.last(t, "get_dns_settings"), map[string]string{"zone_host": "example.com."})
+	wantAbsent(t, rec.last(t, "get_dns_settings"), "record_id")
+}
+
+func TestDNS_ListEmptyAndFault(t *testing.T) {
+	ctx := context.Background()
+	for _, answer := range []string{"", "!empty_list"} {
+		c, _ := newFake(t, map[string]string{"get_dns_settings": answer})
+		records, err := c.DNS.List(ctx, "example.com")
+		if err != nil || len(records) != 0 {
+			t.Fatalf("answer %q: %v %v", answer, records, err)
+		}
+	}
+	c, _ := newFake(t, map[string]string{"get_dns_settings": "!zone_not_found"})
+	_, err := c.DNS.List(ctx, "example.com")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != "zone_not_found" {
+		t.Fatalf("a missing zone is a fault, not an empty list: %v", err)
+	}
+}
+
+func TestDNS_GetFiltersOnTheServer(t *testing.T) {
+	ctx := context.Background()
+	c, rec := newFake(t, map[string]string{"get_dns_settings": dnsEntry("7", "www", "A", "203.0.113.1", "0")})
+
+	r, err := c.DNS.Get(ctx, "example.com", "7")
+	if err != nil || r.ID != "7" || r.Data != "203.0.113.1" {
+		t.Fatalf("Get: %+v %v", r, err)
+	}
+	wantParams(t, rec.last(t, "get_dns_settings"), map[string]string{"zone_host": "example.com.", "record_id": "7"})
+
+	// A server that ignores the filter must not return the wrong record.
+	if _, err := c.DNS.Get(ctx, "example.com", "8"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+	if _, err := c.DNS.Get(ctx, "example.com", ""); err == nil {
+		t.Fatal("Get without id must fail")
+	}
+	c, _ = newFake(t, map[string]string{"get_dns_settings": "!record_id_not_found"})
+	if _, err := c.DNS.Get(ctx, "example.com", "9"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("not-found fault: expected ErrNotFound, got %v", err)
+	}
+	c, _ = newFake(t, map[string]string{"get_dns_settings": "!kas_error"})
+	if _, err := c.DNS.Get(ctx, "example.com", "9"); err == nil || errors.Is(err, ErrNotFound) ||
+		!strings.Contains(err.Error(), "reading DNS record 9") {
+		t.Fatalf("other faults must be returned with context, got %v", err)
+	}
+}
+
+func TestDNS_UpdateAndDeleteFaults(t *testing.T) {
+	ctx := context.Background()
+
+	c, rec := newFake(t, map[string]string{"update_dns_settings": "TRUE"})
+	if err := c.DNS.Update(ctx, DNSRecord{ID: "7", Name: "www", Data: "203.0.113.2", Aux: 5}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	wantParams(t, rec.last(t, "update_dns_settings"), map[string]string{
+		"record_id": "7", "record_name": "www", "record_data": "203.0.113.2", "record_aux": "5",
+	})
+	if err := c.DNS.Update(ctx, DNSRecord{Name: "www"}); err == nil {
+		t.Fatal("Update without id must fail")
+	}
+
+	c, _ = newFake(t, map[string]string{"update_dns_settings": "!nothing_to_do"})
+	if err := c.DNS.Update(ctx, DNSRecord{ID: "7"}); err != nil {
+		t.Fatalf("nothing_to_do must be success, got %v", err)
+	}
+	c, _ = newFake(t, map[string]string{"update_dns_settings": "!record_syntax_incorrect"})
+	if err := c.DNS.Update(ctx, DNSRecord{ID: "7"}); err == nil || !strings.Contains(err.Error(), "updating DNS record 7") {
+		t.Fatalf("fault must be returned with context, got %v", err)
+	}
+
+	c, _ = newFake(t, map[string]string{"delete_dns_settings": "!record_id_not_found"})
+	if err := c.DNS.Delete(ctx, "7"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+	if err := c.DNS.Delete(ctx, ""); err == nil {
+		t.Fatal("Delete without id must fail")
+	}
+	c, _ = newFake(t, map[string]string{"delete_dns_settings": "!record_has_ssl_certificate"})
+	if err := c.DNS.Delete(ctx, "7"); err == nil || errors.Is(err, ErrNotFound) ||
+		!strings.Contains(err.Error(), "deleting DNS record 7") {
+		t.Fatalf("fault must be returned with context, got %v", err)
 	}
 }
