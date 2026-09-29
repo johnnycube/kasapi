@@ -56,6 +56,8 @@
       matchManagers: ['gomod'],
       matchDepTypes: ['golang'],
       groupName: 'go toolchain',
+      // Renovate does not bump the go directive unless told to.
+      rangeStrategy: 'bump',
       dependencyDashboardApproval: true,
     },
     {
