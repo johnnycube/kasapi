@@ -7,7 +7,7 @@
 // delays and the PHP-shaped responses. Standard-library only.
 //
 // Client.Exec runs any KAS action with raw parameters; the typed services
-// (DNS, Mail, Subdomains, Domains) are thin wrappers over it.
+// are thin wrappers over it.
 //
 // Unofficial: not affiliated with all-inkl.com (Neue Medien Münnich GmbH).
 package kasapi
@@ -79,6 +79,7 @@ type Client struct {
 	Mail       *MailService
 	Subdomains *SubdomainService
 	Domains    *DomainService
+	TLS        *TLSService
 }
 
 // New creates a configured Client.
@@ -125,6 +126,7 @@ func New(cfg Config) (*Client, error) {
 	c.Mail = &MailService{c: c}
 	c.Subdomains = &SubdomainService{c: c}
 	c.Domains = &DomainService{c: c}
+	c.TLS = &TLSService{c: c}
 	return c, nil
 }
 
