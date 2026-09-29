@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Command kascli is a kubectl-style CLI for the all-inkl.com KAS API: accounts
-// as contexts in a kubeconfig-like file, kubectl verbs (get/delete) with
-// table/json/yaml/name output, and "exec" for any raw KAS action. See the
-// README or `kascli --help` for usage. Credentials resolve like kubectl
-// (--context > current-context); KAS_LOGIN/KAS_PASSWORD override the context.
+// as contexts in a kubeconfig-like file, kubectl verbs (get/create/update/
+// delete) with table/json/yaml/name output, and "exec" for any raw KAS action.
+// See the README or `kascli --help` for usage. Credentials resolve like
+// kubectl (--context > current-context); KAS_LOGIN/KAS_PASSWORD override the
+// context.
 package main
 
 import (
@@ -58,9 +59,10 @@ func newRootCmd() *cobra.Command {
 		Long: `kascli - kubectl-style CLI for the all-inkl.com KAS API (unofficial)
 
 Accounts are managed as contexts in a kubeconfig-like file at
-~/.config/kasapi/config (override with $KASCONFIG). Resources are read and
-deleted with kubectl verbs and output formats; any raw KAS action can be run
-through "exec" (also the way to verify field names against a real account).
+~/.config/kasapi/config (override with $KASCONFIG). Resources are read,
+created, updated and deleted with kubectl verbs and output formats; any raw
+KAS action can be run through "exec" (also the way to verify field names
+against a real account).
 
 Environment:
   KASCONFIG                config file (default ~/.config/kasapi/config)
@@ -86,6 +88,8 @@ Environment:
 
 	root.AddCommand(
 		newGetCmd(g),
+		newCreateCmd(g),
+		newUpdateCmd(g),
 		newDeleteCmd(g),
 		newExecCmd(g),
 		newConfigCmd(g),

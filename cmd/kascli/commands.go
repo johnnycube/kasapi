@@ -20,17 +20,17 @@ type resource struct {
 
 // resources lists the supported resource types in api-resources order.
 var resources = []resource{
-	{"cronjobs", "cronjob", "cj", "get,delete"},
-	{"databases", "database", "db", "get,delete"},
-	{"ddnsusers", "ddnsuser", "ddns", "get,delete"},
-	{"dnsrecords", "dnsrecord", "dns", "get,delete"},
-	{"domains", "domain", "do", "get"},
-	{"ftpusers", "ftpuser", "ftp", "get,delete"},
-	{"mailaccounts", "mailaccount", "ma", "get,delete"},
+	{"cronjobs", "cronjob", "cj", "get,create,update,delete"},
+	{"databases", "database", "db", "get,create,update,delete"},
+	{"ddnsusers", "ddnsuser", "ddns", "get,create,update,delete"},
+	{"dnsrecords", "dnsrecord", "dns", "get,create,update,delete"},
+	{"domains", "domain", "do", "get,update"},
+	{"ftpusers", "ftpuser", "ftp", "get,create,update,delete"},
+	{"mailaccounts", "mailaccount", "ma", "get,create,update,delete"},
 	{"mailfilters", "mailfilter", "mfi", "get"},
-	{"mailforwards", "mailforward", "mf", "get,delete"},
-	{"subdomains", "subdomain", "sub", "get,delete"},
-	{"tls", "tls", "", "get"},
+	{"mailforwards", "mailforward", "mf", "get,create,update,delete"},
+	{"subdomains", "subdomain", "sub", "get,create,update,delete"},
+	{"tls", "tls", "", "get,update"},
 }
 
 // aliases returns the names a resource answers to besides its canonical one.

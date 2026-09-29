@@ -31,6 +31,12 @@ func (r *recorder) last(t *testing.T, action string) map[string]any {
 	return all[len(all)-1]
 }
 
+func (r *recorder) count(action string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.seen[action])
+}
+
 // total returns the number of recorded calls of all actions.
 func (r *recorder) total() int {
 	r.mu.Lock()
@@ -105,6 +111,16 @@ func paramString(v any) string {
 		return strconv.FormatFloat(f, 'f', -1, 64)
 	}
 	return fmt.Sprint(v)
+}
+
+// wantAbsent fails the test when got carries one of the keys.
+func wantAbsent(t *testing.T, got map[string]any, keys ...string) {
+	t.Helper()
+	for _, k := range keys {
+		if _, ok := got[k]; ok {
+			t.Errorf("parameter %s must not be sent (all: %v)", k, got)
+		}
+	}
 }
 
 // wantErr fails the test unless the CLI returns an error containing want.

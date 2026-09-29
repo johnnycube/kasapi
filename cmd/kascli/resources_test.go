@@ -55,6 +55,38 @@ func TestResourceAliases(t *testing.T) {
 	}
 }
 
+func TestCLI_APIResourcesMatchCommands(t *testing.T) {
+	// Every verb api-resources advertises is a command that exists.
+	root := newRootCmd()
+	for _, r := range resources {
+		for _, verb := range strings.Split(r.verbs, ",") {
+			if verb == "get" || verb == "delete" {
+				continue // dispatched by resource name, covered by their tests
+			}
+			cmd, _, err := root.Find([]string{verb, r.kind})
+			if err != nil || cmd.Name() != r.kind {
+				t.Errorf("%s %s: no such command (%v)", verb, r.kind, err)
+			}
+		}
+	}
+	// And no command exists that api-resources hides.
+	for _, verb := range []string{"create", "update"} {
+		parent, _, _ := root.Find([]string{verb})
+		for _, sub := range parent.Commands() {
+			name, err := canonicalResource(sub.Name())
+			if err != nil {
+				t.Errorf("%s %s: not a resource", verb, sub.Name())
+				continue
+			}
+			for _, r := range resources {
+				if r.name == name && !strings.Contains(","+r.verbs+",", ","+verb+",") {
+					t.Errorf("%s %s exists but api-resources does not list the verb", verb, sub.Name())
+				}
+			}
+		}
+	}
+}
+
 func hostEntry(kind, name string) string {
 	return entry(
 		kind+"_name", name, kind+"_path", "/"+name+"/", kind+"_redirect_status", "301",
