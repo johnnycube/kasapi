@@ -7,7 +7,7 @@
 // delays and the PHP-shaped responses. Standard-library only.
 //
 // Client.Exec runs any KAS action with raw parameters; the typed services
-// (DNS, Mail, Subdomains, Domains) are thin wrappers over it.
+// are thin wrappers over it.
 //
 // Unofficial: not affiliated with all-inkl.com (Neue Medien Münnich GmbH).
 package kasapi
@@ -29,6 +29,9 @@ const (
 
 	apiNamespace  = "https://kasserver.com/soap/KasApi.php"
 	authNamespace = "https://kasserver.com/soap/KasAuth.php"
+
+	// MaxSessionLifetime is the longest session KAS grants, in seconds.
+	MaxSessionLifetime = 30000
 )
 
 // APIError is a KAS API error reported as a SOAP fault, e.g.
@@ -48,7 +51,10 @@ type Config struct {
 	Password string // account or API password
 	AuthType AuthType
 
-	SessionLifetime int // seconds, max 3600; default 1800
+	// OTP supplies the one-time PIN for 2FA accounts on every session handshake.
+	OTP func(ctx context.Context) (string, error)
+
+	SessionLifetime int // seconds, 1-30000; default 1800
 	UserAgent       string
 
 	// HTTPClient overrides the default (TLS >= 1.2, 60s timeout). A custom
@@ -73,6 +79,11 @@ type Client struct {
 	Mail       *MailService
 	Subdomains *SubdomainService
 	Domains    *DomainService
+	TLS        *TLSService
+	FTP        *FTPService
+	Databases  *DatabaseService
+	Cronjobs   *CronjobService
+	DDNS       *DDNSService
 }
 
 // New creates a configured Client.
@@ -90,8 +101,8 @@ func New(cfg Config) (*Client, error) {
 	if cfg.SessionLifetime <= 0 {
 		cfg.SessionLifetime = 1800
 	}
-	if cfg.SessionLifetime > 3600 {
-		cfg.SessionLifetime = 3600
+	if cfg.SessionLifetime > MaxSessionLifetime {
+		cfg.SessionLifetime = MaxSessionLifetime
 	}
 	if cfg.UserAgent == "" {
 		cfg.UserAgent = "kasapi-go"
@@ -119,6 +130,11 @@ func New(cfg Config) (*Client, error) {
 	c.Mail = &MailService{c: c}
 	c.Subdomains = &SubdomainService{c: c}
 	c.Domains = &DomainService{c: c}
+	c.TLS = &TLSService{c: c}
+	c.FTP = &FTPService{c: c}
+	c.Databases = &DatabaseService{c: c}
+	c.Cronjobs = &CronjobService{c: c}
+	c.DDNS = &DDNSService{c: c}
 	return c, nil
 }
 

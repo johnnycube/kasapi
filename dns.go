@@ -27,6 +27,22 @@ type DNSRecord struct {
 	// Changeable reports whether KAS allows modifying this record. System
 	// records (e.g. default NS) are read-only.
 	Changeable bool
+	// Deletable reports whether KAS allows deleting this record.
+	Deletable bool
+}
+
+func dnsRecordFrom(zone string, m map[string]any) DNSRecord {
+	return DNSRecord{
+		ID:         asString(m["record_id"]),
+		Zone:       strings.TrimSuffix(normalizeZone(zone), "."),
+		Name:       asString(m["record_name"]),
+		Type:       asString(m["record_type"]),
+		Data:       asString(m["record_data"]),
+		Aux:        asInt(m["record_aux"]),
+		Changeable: isYes(m["record_changeable"]),
+		// The field name carries the API's spelling.
+		Deletable: isYes(m["record_deleteable"]),
+	}
 }
 
 // normalizeZone ensures the trailing dot KAS expects in zone_host.
@@ -40,46 +56,37 @@ func normalizeZone(zone string) string {
 
 // List returns all records of a zone.
 func (s *DNSService) List(ctx context.Context, zone string) ([]DNSRecord, error) {
-	ret, err := s.c.Exec(ctx, "get_dns_settings", map[string]any{
+	items, err := s.c.list(ctx, "get_dns_settings", map[string]any{
 		"zone_host": normalizeZone(zone),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("listing DNS records for %q: %w", zone, err)
 	}
-
-	items, ok := ret.([]any)
-	if !ok {
-		return nil, nil // empty zone yields a non-list
-	}
-
 	records := make([]DNSRecord, 0, len(items))
-	for _, it := range items {
-		m, ok := it.(map[string]any)
-		if !ok {
-			continue
-		}
-		records = append(records, DNSRecord{
-			ID:         asString(m["record_id"]),
-			Zone:       strings.TrimSuffix(normalizeZone(zone), "."),
-			Name:       asString(m["record_name"]),
-			Type:       asString(m["record_type"]),
-			Data:       asString(m["record_data"]),
-			Aux:        asInt(m["record_aux"]),
-			Changeable: asString(m["record_changeable"]) == "Y",
-		})
+	for _, m := range items {
+		records = append(records, dnsRecordFrom(zone, m))
 	}
 	return records, nil
 }
 
 // Get returns a single record by id, or ErrNotFound.
 func (s *DNSService) Get(ctx context.Context, zone, id string) (*DNSRecord, error) {
-	records, err := s.List(ctx, zone)
-	if err != nil {
-		return nil, err
+	if id == "" {
+		return nil, errors.New("kasapi: DNS record id must not be empty")
 	}
-	for i := range records {
-		if records[i].ID == id {
-			return &records[i], nil
+	items, err := s.c.getOne(ctx, "get_dns_settings", map[string]any{
+		"zone_host": normalizeZone(zone),
+		"record_id": id,
+	})
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("reading DNS record %s: %w", id, err)
+	}
+	for _, m := range items {
+		if rec := dnsRecordFrom(zone, m); rec.ID == id {
+			return &rec, nil
 		}
 	}
 	return nil, ErrNotFound
@@ -130,7 +137,7 @@ func (s *DNSService) Update(ctx context.Context, r DNSRecord) error {
 		"record_data": r.Data,
 		"record_aux":  r.Aux,
 	})
-	if err != nil {
+	if err != nil && !isNothingToDo(err) {
 		return fmt.Errorf("updating DNS record %s: %w", r.ID, err)
 	}
 	return nil

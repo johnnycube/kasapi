@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Command kascli is a kubectl-style CLI for the all-inkl.com KAS API: accounts
-// as contexts in a kubeconfig-like file, kubectl verbs (get/delete) with
-// table/json/yaml/name output, and "exec" for any raw KAS action. See the
-// README or `kascli --help` for usage. Credentials resolve like kubectl
-// (--context > current-context); KAS_LOGIN/KAS_PASSWORD override the context.
+// as contexts in a kubeconfig-like file, kubectl verbs (get/create/update/
+// delete) with table/json/yaml/name output, and "exec" for any raw KAS action.
+// See the README or `kascli --help` for usage. Credentials resolve like
+// kubectl (--context > current-context); KAS_LOGIN/KAS_PASSWORD override the
+// context.
 package main
 
 import (
@@ -30,6 +31,7 @@ type globals struct {
 	output    string
 	noHeaders bool
 	timeout   time.Duration
+	otp       string
 }
 
 func main() {
@@ -57,13 +59,15 @@ func newRootCmd() *cobra.Command {
 		Long: `kascli - kubectl-style CLI for the all-inkl.com KAS API (unofficial)
 
 Accounts are managed as contexts in a kubeconfig-like file at
-~/.config/kasapi/config (override with $KASCONFIG). Resources are read and
-deleted with kubectl verbs and output formats; any raw KAS action can be run
-through "exec" (also the way to verify field names against a real account).
+~/.config/kasapi/config (override with $KASCONFIG). Resources are read,
+created, updated and deleted with kubectl verbs and output formats; any raw
+KAS action can be run through "exec" (also the way to verify field names
+against a real account).
 
 Environment:
   KASCONFIG                config file (default ~/.config/kasapi/config)
-  KAS_LOGIN, KAS_PASSWORD  override the context's credentials`,
+  KAS_LOGIN, KAS_PASSWORD  override the context's credentials
+  KAS_OTP                  one-time PIN for accounts with two-factor authentication`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// A bare "kascli" is an error (kubectl-style: a verb is required).
@@ -80,9 +84,12 @@ Environment:
 	pf.StringVarP(&g.output, "output", "o", "", "output format: table|wide|json|yaml|name")
 	pf.BoolVar(&g.noHeaders, "no-headers", false, "omit table headers")
 	pf.DurationVar(&g.timeout, "timeout", 90*time.Second, "overall request timeout")
+	pf.StringVar(&g.otp, "otp", "", "one-time PIN for accounts with two-factor authentication")
 
 	root.AddCommand(
 		newGetCmd(g),
+		newCreateCmd(g),
+		newUpdateCmd(g),
 		newDeleteCmd(g),
 		newExecCmd(g),
 		newConfigCmd(g),
@@ -113,7 +120,7 @@ func legacyExecRewrite(args []string) []string {
 // firstPositional returns the first non-flag argument and its index, skipping
 // global flags and their separate-form values.
 func firstPositional(args []string) (string, int) {
-	valueFlags := map[string]bool{"--context": true, "--output": true, "-o": true, "--timeout": true}
+	valueFlags := map[string]bool{"--context": true, "--output": true, "-o": true, "--timeout": true, "--otp": true}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if strings.HasPrefix(a, "-") {
@@ -157,9 +164,9 @@ func newClient(g *globals) (*kasapi.Client, context.Context, context.CancelFunc,
 		}
 	}
 
-	login, password, authType := "", "", ""
+	login, password, authType, twoFactor := "", "", "", false
 	if ktx != nil {
-		login, password, authType = ktx.Login, ktx.Password, ktx.AuthType
+		login, password, authType, twoFactor = ktx.Login, ktx.Password, ktx.AuthType, ktx.TwoFactor
 	}
 	if v := os.Getenv("KAS_LOGIN"); v != "" {
 		login = v
@@ -177,16 +184,22 @@ func newClient(g *globals) (*kasapi.Client, context.Context, context.CancelFunc,
 		return nil, nil, nil, fmt.Errorf("no credentials: set a context (kascli config set-context NAME --login ...) or KAS_LOGIN/KAS_PASSWORD")
 	}
 	if password == "" {
-		password, err = promptPassword(login)
+		password, err = promptSecret("Password for " + login)
 		if err != nil {
 			return nil, nil, nil, err
 		}
+	}
+
+	otp := g.otp
+	if otp == "" {
+		otp = os.Getenv("KAS_OTP")
 	}
 
 	client, err := kasapi.New(kasapi.Config{
 		Login:        login,
 		Password:     password,
 		AuthType:     kasapi.AuthType(authType),
+		OTP:          otpSource(login, otp, twoFactor),
 		UserAgent:    "kascli",
 		APIEndpoint:  os.Getenv("KAS_API_ENDPOINT"),
 		AuthEndpoint: os.Getenv("KAS_AUTH_ENDPOINT"),
@@ -198,32 +211,54 @@ func newClient(g *globals) (*kasapi.Client, context.Context, context.CancelFunc,
 	return client, ctx, cancel, nil
 }
 
-// promptPassword reads a password from the terminal with echo disabled. When
+// otpSource returns the one-time PIN callback. A given PIN serves one login.
+func otpSource(login, pin string, twoFactor bool) func(context.Context) (string, error) {
+	if pin == "" && !twoFactor {
+		return nil
+	}
+	return func(context.Context) (string, error) {
+		if pin != "" {
+			once := pin
+			pin = ""
+			return once, nil
+		}
+		return promptSecret("One-time PIN for " + login)
+	}
+}
+
+// stdin is shared so consecutive reads do not lose buffered input.
+var stdin = bufio.NewReader(os.Stdin)
+
+// promptSecret reads a secret from the terminal with echo disabled. When
 // stdin is not a terminal (a pipe or redirect) it falls back to reading a
 // plain line, so scripted input still works.
-func promptPassword(login string) (string, error) {
-	fmt.Fprintf(os.Stderr, "Password for %s: ", login)
+func promptSecret(label string) (string, error) {
+	fmt.Fprintf(os.Stderr, "%s: ", label)
 
 	fd := int(os.Stdin.Fd())
-	var (
-		pw  string
-		err error
-	)
 	if term.IsTerminal(fd) {
-		var b []byte
-		b, err = term.ReadPassword(fd)
+		b, err := term.ReadPassword(fd)
 		fmt.Fprintln(os.Stderr)
-		pw = string(b)
-	} else {
-		var line string
-		line, err = bufio.NewReader(os.Stdin).ReadString('\n')
-		pw = strings.TrimRight(line, "\r\n")
+		if err != nil {
+			return "", fmt.Errorf("reading input: %w", err)
+		}
+		if len(b) == 0 {
+			return "", fmt.Errorf("empty input")
+		}
+		return string(b), nil
 	}
-	if err != nil {
-		return "", fmt.Errorf("reading password: %w", err)
+	return readSecretLine()
+}
+
+// readSecretLine reads one line from stdin and strips the line ending.
+func readSecretLine() (string, error) {
+	line, err := stdin.ReadString('\n')
+	secret := strings.TrimRight(line, "\r\n")
+	if err != nil && secret == "" {
+		return "", fmt.Errorf("reading input: %w", err)
 	}
-	if pw == "" {
-		return "", fmt.Errorf("empty password")
+	if secret == "" {
+		return "", fmt.Errorf("empty input")
 	}
-	return pw, nil
+	return secret, nil
 }
