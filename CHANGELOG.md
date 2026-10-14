@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.3.3 — 2026-10-14
+
+Release integrity. No changes to the library API or to kascli behavior.
+
+- `checksums.txt` is signed keyless with cosign; `checksums.txt.sigstore.json`
+  holds the bundle. Each archive has an SPDX SBOM, and GitHub stores a SLSA
+  build provenance attestation for every archive. The release notes show the
+  `cosign verify-blob` command.
+- Builds are reproducible: `-trimpath` and the commit timestamp as file time.
+- A release runs only for a tag on main that passes `make check`.
+- kascli's command code is split into smaller functions to meet the stricter
+  linters (errorlint, gocognit, funlen). Behavior is pinned by the existing
+  tests; coverage stays at 98.9%.
+
 ## v0.3.2 — 2026-10-14
 
 Build only. `go.mod` sets `toolchain go1.26.9`, so CI and the release build
