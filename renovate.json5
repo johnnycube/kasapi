@@ -15,7 +15,16 @@
     // Batch routine updates into Monday mornings; security updates ignore the
     // schedule (see vulnerabilityAlerts below).
     'schedule:earlyMondays',
+    // Tool pins: `# renovate:` comments above *_VERSION in the Makefile and
+    // workflow env blocks.
+    'customManagers:makefileVersions',
+    'customManagers:githubActionsVersions',
   ],
+
+  // Hook revisions in .pre-commit-config.yaml.
+  'pre-commit': {
+    enabled: true,
+  },
 
   timezone: 'Europe/Berlin',
   labels: ['dependencies'],
