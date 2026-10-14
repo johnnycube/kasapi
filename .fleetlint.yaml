@@ -1,0 +1,8 @@
+# .fleetlint.yaml: https://github.com/fleetlint/fleetlint
+version: 1
+extends:
+  - fleetlint:recommended
+facts:
+  visibility: public   # as the forge reported it at init; update it if the repository changes hands
+# discovered: stacks=[go] forge=github visibility=public tier=1 (default) layout=single release=yes taskrunner=make container=none
+# Facts are re-detected on every run; pin one under `facts:` only when detection is wrong.
