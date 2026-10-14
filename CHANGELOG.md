@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.2 — 2026-10-14
+
+Build only. `go.mod` sets `toolchain go1.26.9`, so CI and the release build
+kascli with Go 1.26.9 and its standard library security fixes (net/http,
+crypto/tls, html/template, net/textproto). The v0.3.1 binaries were built with
+Go 1.26.0. The `go` directive stays at 1.26.0: the minimum Go for modules that
+import kasapi does not change. No code changes.
+
 ## v0.3.1 — 2026-09-29
 
 Documentation only. The README gains a reference of every object: its
