@@ -386,7 +386,8 @@ core `kasapi` package stays standard-library-only regardless.
 
 ```sh
 go test -race ./...        # unit tests + the kasapitest fake server
-make cover                 # coverage summary
+make cover                 # coverage, fails below 95%
+make check                 # everything CI runs (make tools installs the linters)
 ```
 
 The suite covers the SOAP decoder, the auth handshake with and without a
