@@ -51,9 +51,10 @@ cover: ## tests with coverage; fail if the total is below COVER_MIN
 	echo "coverage $$total% (minimum $(COVER_MIN)%)"
 	if [ "$${total%.*}" -lt $(COVER_MIN) ]; then echo "coverage below $(COVER_MIN)%"; exit 1; fi
 
+# go-licenses spots stdlib packages by GOROOT; pass the active toolchain's, not the one it was built with
 audit: ## vulnerabilities, licenses, tidy module graph, secrets
 	govulncheck $(PKGS)
-	go-licenses check $(PKGS) --allowed_licenses=$(LICENSES)
+	GOROOT=$$(go env GOROOT) go-licenses check $(PKGS) --allowed_licenses=$(LICENSES)
 	go mod tidy -diff
 	gitleaks git --no-banner --redact .
 
