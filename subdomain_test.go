@@ -310,7 +310,7 @@ func TestWrapHostErr(t *testing.T) {
 	if wrapHostErr("doing", "x", nil) != nil {
 		t.Fatal("nil must stay nil")
 	}
-	if err := wrapHostErr("doing", "x", ErrNotFound); err != ErrNotFound {
+	if err := wrapHostErr("doing", "x", ErrNotFound); err != ErrNotFound { //nolint:errorlint // identity: the error must not be wrapped
 		t.Fatalf("ErrNotFound must pass through unwrapped, got %v", err)
 	}
 	base := &APIError{Code: "in_progress"}

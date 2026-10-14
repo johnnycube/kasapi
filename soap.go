@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -101,7 +102,7 @@ func parseXMLTree(raw []byte) (*xmlNode, error) {
 
 	for {
 		tok, err := dec.Token()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -150,54 +151,67 @@ func (n *xmlNode) childText(name string) string {
 // three KAS shapes: apache Map (<item><key/><value/></item>), SOAP-ENC array
 // (repeated <item>) and plain scalar.
 func (n *xmlNode) toValue() any {
-	if len(n.children) == 0 {
+	switch {
+	case len(n.children) == 0:
 		return strings.TrimSpace(n.text)
+	case isKeyValueMap(n):
+		return n.mapValue()
+	case allNamed(n, "item"):
+		return n.listValue()
 	}
+	return n.structValue()
+}
 
-	// apache Map: every child is an <item> with key/value -> map.
-	if isKeyValueMap(n) {
-		m := make(map[string]any, len(n.children))
-		for _, item := range n.children {
-			var key string
-			var val any = ""
-			for _, kv := range item.children {
-				switch kv.name {
-				case "key":
-					key = strings.TrimSpace(kv.text)
-				case "value":
-					val = kv.toValue()
-				}
+// mapValue converts an apache Map: every child is an <item> with key/value.
+func (n *xmlNode) mapValue() map[string]any {
+	m := make(map[string]any, len(n.children))
+	for _, item := range n.children {
+		var key string
+		var val any = ""
+		for _, kv := range item.children {
+			switch kv.name {
+			case "key":
+				key = strings.TrimSpace(kv.text)
+			case "value":
+				val = kv.toValue()
 			}
-			m[key] = val
 		}
-		return m
+		m[key] = val
 	}
+	return m
+}
 
-	// SOAP-ENC array: repeated keyless <item> -> slice.
-	if allNamed(n, "item") {
-		list := make([]any, 0, len(n.children))
-		for _, item := range n.children {
-			list = append(list, item.toValue())
-		}
-		return list
+// listValue converts a SOAP-ENC array: repeated keyless <item>.
+func (n *xmlNode) listValue() []any {
+	list := make([]any, 0, len(n.children))
+	for _, item := range n.children {
+		list = append(list, item.toValue())
 	}
+	return list
+}
 
-	// Fallback: struct-like, map children by element name. Duplicate names
-	// are collected into a slice.
+// structValue maps children by element name; duplicate names are collected
+// into a slice.
+func (n *xmlNode) structValue() map[string]any {
 	m := make(map[string]any, len(n.children))
 	for _, c := range n.children {
 		v := c.toValue()
-		if existing, ok := m[c.name]; ok {
-			if s, isSlice := existing.([]any); isSlice {
-				m[c.name] = append(s, v)
-			} else {
-				m[c.name] = []any{existing, v}
-			}
-			continue
+		existing, ok := m[c.name]
+		switch {
+		case !ok:
+			m[c.name] = v
+		case isSlice(existing):
+			m[c.name] = append(existing.([]any), v)
+		default:
+			m[c.name] = []any{existing, v}
 		}
-		m[c.name] = v
 	}
 	return m
+}
+
+func isSlice(v any) bool {
+	_, ok := v.([]any)
+	return ok
 }
 
 func isKeyValueMap(n *xmlNode) bool {

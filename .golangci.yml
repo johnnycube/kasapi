@@ -7,7 +7,18 @@ linters:
     - unconvert
     - unparam
     - gosec
+    - errorlint
+    - gocognit
+    - funlen
+    - dupl
   settings:
+    gocognit:
+      min-complexity: 15
+    funlen:
+      lines: 60
+      statements: 40
+    dupl:
+      threshold: 120
     errcheck:
       # Writes to stdout/stderr and other fire-and-forget writers: a failed
       # write to an already-broken pipe is not actionable, and threading the
@@ -34,3 +45,6 @@ linters:
       - path: _test\.go
         linters:
           - gosec
+          - funlen
+          - gocognit
+          - dupl

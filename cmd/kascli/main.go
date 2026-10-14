@@ -12,6 +12,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -146,48 +147,67 @@ func newVersionCmd() *cobra.Command {
 	}
 }
 
-func newClient(g *globals) (*kasapi.Client, context.Context, context.CancelFunc, error) {
+// credentials are the login data of one kascli run.
+type credentials struct {
+	login, password, authType string
+	twoFactor                 bool
+}
+
+// currentContext returns the selected context, or nil when none is set.
+func currentContext(g *globals) (*kasconfig.Context, error) {
 	cfg, err := kasconfig.Load(kasconfig.Path())
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
-
-	var ktx *kasconfig.Context
 	name := g.context
 	if name == "" {
 		name = cfg.CurrentContext
 	}
-	if name != "" {
-		ktx, err = cfg.Get(name)
-		if err != nil {
-			return nil, nil, nil, err
-		}
+	if name == "" {
+		return nil, nil
 	}
+	return cfg.Get(name)
+}
 
-	login, password, authType, twoFactor := "", "", "", false
+// resolveCredentials takes the context's credentials, overridden by the
+// KAS_* environment variables, and prompts for a missing password.
+func resolveCredentials(g *globals) (credentials, error) {
+	ktx, err := currentContext(g)
+	if err != nil {
+		return credentials{}, err
+	}
+	var c credentials
 	if ktx != nil {
-		login, password, authType, twoFactor = ktx.Login, ktx.Password, ktx.AuthType, ktx.TwoFactor
+		c = credentials{login: ktx.Login, password: ktx.Password, authType: ktx.AuthType, twoFactor: ktx.TwoFactor}
 	}
-	if v := os.Getenv("KAS_LOGIN"); v != "" {
-		login = v
+	envOverride(&c.login, "KAS_LOGIN")
+	envOverride(&c.password, "KAS_PASSWORD")
+	envOverride(&c.authType, "KAS_AUTH_TYPE")
+	if c.authType == "" {
+		c.authType = "sha1"
 	}
-	if v := os.Getenv("KAS_PASSWORD"); v != "" {
-		password = v
+	if c.login == "" {
+		return c, errors.New("no credentials: set a context (kascli config set-context NAME --login ...) or KAS_LOGIN/KAS_PASSWORD")
 	}
-	if v := os.Getenv("KAS_AUTH_TYPE"); v != "" {
-		authType = v
-	}
-	if authType == "" {
-		authType = "sha1"
-	}
-	if login == "" {
-		return nil, nil, nil, fmt.Errorf("no credentials: set a context (kascli config set-context NAME --login ...) or KAS_LOGIN/KAS_PASSWORD")
-	}
-	if password == "" {
-		password, err = promptSecret("Password for " + login)
-		if err != nil {
-			return nil, nil, nil, err
+	if c.password == "" {
+		if c.password, err = promptSecret("Password for " + c.login); err != nil {
+			return c, err
 		}
+	}
+	return c, nil
+}
+
+// envOverride replaces *dst with the variable's value when it is set.
+func envOverride(dst *string, name string) {
+	if v := os.Getenv(name); v != "" {
+		*dst = v
+	}
+}
+
+func newClient(g *globals) (*kasapi.Client, context.Context, context.CancelFunc, error) {
+	creds, err := resolveCredentials(g)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
 	otp := g.otp
@@ -196,10 +216,10 @@ func newClient(g *globals) (*kasapi.Client, context.Context, context.CancelFunc,
 	}
 
 	client, err := kasapi.New(kasapi.Config{
-		Login:        login,
-		Password:     password,
-		AuthType:     kasapi.AuthType(authType),
-		OTP:          otpSource(login, otp, twoFactor),
+		Login:        creds.login,
+		Password:     creds.password,
+		AuthType:     kasapi.AuthType(creds.authType),
+		OTP:          otpSource(creds.login, otp, creds.twoFactor),
 		UserAgent:    "kascli",
 		APIEndpoint:  os.Getenv("KAS_API_ENDPOINT"),
 		AuthEndpoint: os.Getenv("KAS_AUTH_ENDPOINT"),
