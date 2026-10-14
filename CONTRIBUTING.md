@@ -28,8 +28,13 @@ Every Go file carries this header; add it to new files:
   dependencies there. `cmd/kascli` and `internal/` may use well-maintained
   community libraries; they currently use cobra, `gopkg.in/yaml.v3` and
   `golang.org/x/term`.
-- `gofmt`, `go vet ./...` and `go test -race ./...` must pass. CI enforces all
-  three.
+- `make check` must pass: format, golangci-lint, `go vet`, tests with the race
+  detector, a 95% coverage floor, govulncheck, the license allowlist, a tidy
+  module graph, gitleaks, the build and fleetlint. CI runs the same target.
+  `make tools` installs the pinned tools; gitleaks comes from its own release.
+- `prek install` sets up the git hooks in `.pre-commit-config.yaml`: hygiene
+  and secret checks and conventional commit messages on commit, `make check`
+  before push.
 - A new KAS use case is a typed service over `Client.Exec` with tests against
   the `kasapitest` fake server, mirroring the existing services.
 - Verify KAS request/response field names with `kascli exec <action>` against a

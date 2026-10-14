@@ -78,27 +78,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
 
 	if strings.Contains(r.URL.Path, "KasAuth") {
-		s.AuthCalls.Add(1)
-		ok := false
-		switch req["kas_auth_type"] {
-		case "sha1":
-			sum := sha1.Sum([]byte(s.Password))
-			ok = req["kas_auth_data"] == hex.EncodeToString(sum[:])
-		case "plain":
-			ok = req["kas_auth_data"] == s.Password
-		}
-		if !ok {
-			s.WriteFault(w, "kas_login_incorrect")
-			return
-		}
-		if s.OTP != "" && req["session_2fa"] != s.OTP {
-			s.WriteFault(w, "kas_2fa_incorrect")
-			return
-		}
-		if lifetime, ok := req["session_lifetime"].(float64); ok {
-			s.SessionLifetime.Store(int64(lifetime))
-		}
-		fmt.Fprint(w, Envelope(`<return xsi:type="xsd:string">`+s.Token+`</return>`))
+		s.serveAuth(w, req)
 		return
 	}
 
@@ -124,6 +104,32 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
   </value></item>
   <item><key>KasFloodDelay</key><value>0.01</value></item>
 </return>`))
+}
+
+// serveAuth answers a KasAuth request: it checks password and PIN and
+// returns the token.
+func (s *Server) serveAuth(w http.ResponseWriter, req map[string]any) {
+	s.AuthCalls.Add(1)
+	ok := false
+	switch req["kas_auth_type"] {
+	case "sha1":
+		sum := sha1.Sum([]byte(s.Password))
+		ok = req["kas_auth_data"] == hex.EncodeToString(sum[:])
+	case "plain":
+		ok = req["kas_auth_data"] == s.Password
+	}
+	if !ok {
+		s.WriteFault(w, "kas_login_incorrect")
+		return
+	}
+	if s.OTP != "" && req["session_2fa"] != s.OTP {
+		s.WriteFault(w, "kas_2fa_incorrect")
+		return
+	}
+	if lifetime, ok := req["session_lifetime"].(float64); ok {
+		s.SessionLifetime.Store(int64(lifetime))
+	}
+	fmt.Fprint(w, Envelope(`<return xsi:type="xsd:string">`+s.Token+`</return>`))
 }
 
 // Envelope wraps inner XML in a minimal SOAP envelope.

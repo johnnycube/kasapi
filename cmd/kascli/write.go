@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -557,15 +558,9 @@ func updateDNSRecordCmd(g *globals) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		if fl.Changed("name") {
-			rec.Name = name
-		}
-		if fl.Changed("data") {
-			rec.Data = data
-		}
-		if fl.Changed("aux") {
-			rec.Aux = aux
-		}
+		setIfChanged(fl, "name", &rec.Name, name)
+		setIfChanged(fl, "data", &rec.Data, data)
+		setIfChanged(fl, "aux", &rec.Aux, aux)
 		if err := client.DNS.Update(ctx, *rec); err != nil {
 			return err
 		}
@@ -580,31 +575,29 @@ func updateDNSRecordCmd(g *globals) *cobra.Command {
 	return cmd
 }
 
-func updateDomainCmd(g *globals) *cobra.Command {
-	var host hostFlags
-	cmd := resourceCmd("domains", "change the host settings of a domain", true)
-	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		if err := noChange(cmd); err != nil {
-			return err
-		}
-		client, ctx, cancel, err := newClient(g)
-		if err != nil {
-			return err
-		}
-		defer cancel()
-		if err := client.Domains.Update(ctx, args[0], host.settings(cmd)); err != nil {
-			return err
-		}
-		fmt.Printf("domain/%s updated\n", args[0])
-		return nil
+// setIfChanged sets *dst to v when the flag was given.
+func setIfChanged[T any](fl *pflag.FlagSet, flag string, dst *T, v T) {
+	if fl.Changed(flag) {
+		*dst = v
 	}
-	host.register(cmd, true)
-	return cmd
+}
+
+func updateDomainCmd(g *globals) *cobra.Command {
+	return updateHostCmd(g, "domains", "domain", func(ctx context.Context, c *kasapi.Client, name string, s kasapi.HostSettings) error {
+		return c.Domains.Update(ctx, name, s)
+	})
 }
 
 func updateSubdomainCmd(g *globals) *cobra.Command {
+	return updateHostCmd(g, "subdomains", "subdomain", func(ctx context.Context, c *kasapi.Client, name string, s kasapi.HostSettings) error {
+		return c.Subdomains.Update(ctx, name, s)
+	})
+}
+
+// updateHostCmd changes the host settings of a domain or subdomain.
+func updateHostCmd(g *globals, res, kind string, update func(context.Context, *kasapi.Client, string, kasapi.HostSettings) error) *cobra.Command {
 	var host hostFlags
-	cmd := resourceCmd("subdomains", "change the host settings of a subdomain", true)
+	cmd := resourceCmd(res, "change the host settings of a "+kind, true)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if err := noChange(cmd); err != nil {
 			return err
@@ -614,22 +607,64 @@ func updateSubdomainCmd(g *globals) *cobra.Command {
 			return err
 		}
 		defer cancel()
-		if err := client.Subdomains.Update(ctx, args[0], host.settings(cmd)); err != nil {
+		if err := update(ctx, client, args[0], host.settings(cmd)); err != nil {
 			return err
 		}
-		fmt.Printf("subdomain/%s updated\n", args[0])
+		fmt.Printf("%s/%s updated\n", kind, args[0])
 		return nil
 	}
 	host.register(cmd, true)
 	return cmd
 }
 
+// tlsFlags are the flags of "update tls".
+type tlsFlags struct {
+	certFile, keyFile, bundleFile, csrFile string
+	active, forceHTTPS                     bool
+	hsts                                   int
+}
+
+func (tf *tlsFlags) register(cmd *cobra.Command) {
+	f := cmd.Flags()
+	f.StringVar(&tf.certFile, "cert", "", "PEM file with the certificate")
+	f.StringVar(&tf.keyFile, "key", "", "PEM file with the private key")
+	f.StringVar(&tf.bundleFile, "bundle", "", "PEM file with the intermediate certificates")
+	f.StringVar(&tf.csrFile, "csr", "", "PEM file with the signing request")
+	f.BoolVar(&tf.active, "active", true, "serve the certificate")
+	f.BoolVar(&tf.forceHTTPS, "force-https", false, "redirect HTTP requests to HTTPS")
+	f.IntVar(&tf.hsts, "hsts-max-age", -1, "HSTS max-age in seconds; -1 turns HSTS off")
+}
+
+// update reads the PEM files and collects the given settings.
+func (tf *tlsFlags) update(cmd *cobra.Command) (kasapi.TLSUpdate, error) {
+	var u kasapi.TLSUpdate
+	for _, file := range []struct {
+		flag, path string
+		dst        *string
+	}{
+		{"cert", tf.certFile, &u.Certificate},
+		{"key", tf.keyFile, &u.Key},
+		{"bundle", tf.bundleFile, &u.Bundle},
+		{"csr", tf.csrFile, &u.CSR},
+	} {
+		if file.path == "" {
+			continue
+		}
+		pem, err := readPEM(file.flag, file.path)
+		if err != nil {
+			return u, err
+		}
+		*file.dst = pem
+	}
+	fl := cmd.Flags()
+	setIfChanged(fl, "active", &u.Active, &tf.active)
+	setIfChanged(fl, "force-https", &u.ForceHTTPS, &tf.forceHTTPS)
+	setIfChanged(fl, "hsts-max-age", &u.HSTSMaxAge, &tf.hsts)
+	return u, nil
+}
+
 func updateTLSCmd(g *globals) *cobra.Command {
-	var (
-		certFile, keyFile, bundleFile, csrFile string
-		active, forceHTTPS                     bool
-		hsts                                   int
-	)
+	var tf tlsFlags
 	cmd := resourceCmd("tls", "install a certificate on a host, or set its HTTPS redirect and HSTS", true)
 	cmd.Long = `Install a certificate on a domain or subdomain, or set its HTTPS redirect
 and HSTS.
@@ -642,35 +677,9 @@ uses one.`
 		if err := noChange(cmd); err != nil {
 			return err
 		}
-		var (
-			u   kasapi.TLSUpdate
-			err error
-		)
-		for _, file := range []struct {
-			flag, path string
-			dst        *string
-		}{
-			{"cert", certFile, &u.Certificate},
-			{"key", keyFile, &u.Key},
-			{"bundle", bundleFile, &u.Bundle},
-			{"csr", csrFile, &u.CSR},
-		} {
-			if file.path == "" {
-				continue
-			}
-			if *file.dst, err = readPEM(file.flag, file.path); err != nil {
-				return err
-			}
-		}
-		fl := cmd.Flags()
-		if fl.Changed("active") {
-			u.Active = &active
-		}
-		if fl.Changed("force-https") {
-			u.ForceHTTPS = &forceHTTPS
-		}
-		if fl.Changed("hsts-max-age") {
-			u.HSTSMaxAge = &hsts
+		u, err := tf.update(cmd)
+		if err != nil {
+			return err
 		}
 		client, ctx, cancel, err := newClient(g)
 		if err != nil {
@@ -683,27 +692,132 @@ uses one.`
 		fmt.Printf("tls/%s updated\n", args[0])
 		return nil
 	}
-	f := cmd.Flags()
-	f.StringVar(&certFile, "cert", "", "PEM file with the certificate")
-	f.StringVar(&keyFile, "key", "", "PEM file with the private key")
-	f.StringVar(&bundleFile, "bundle", "", "PEM file with the intermediate certificates")
-	f.StringVar(&csrFile, "csr", "", "PEM file with the signing request")
-	f.BoolVar(&active, "active", true, "serve the certificate")
-	f.BoolVar(&forceHTTPS, "force-https", false, "redirect HTTP requests to HTTPS")
-	f.IntVar(&hsts, "hsts-max-age", -1, "HSTS max-age in seconds; -1 turns HSTS off")
+	tf.register(cmd)
 	return cmd
 }
 
+// mailAccountFlags are the flags of "update mailaccount".
+type mailAccountFlags struct {
+	copies, aliases, allowNets, filters []string
+	state                               string
+	autologin, passwordStdin            bool
+	responder                           string
+	responderText, responderType        string
+	responderName, responderFrom        string
+	responderUntil                      string
+}
+
+func (mf *mailAccountFlags) register(cmd *cobra.Command) {
+	f := cmd.Flags()
+	f.StringSliceVar(&mf.copies, "copy", nil, `addresses that receive a copy of incoming mail; --copy "" clears them`)
+	f.StringSliceVar(&mf.aliases, "sender-alias", nil, `addresses the mailbox may send as; --sender-alias "" clears them`)
+	f.StringSliceVar(&mf.allowNets, "allow-net", nil, `clients allowed to access the mailbox: IP, CIDR or webmail; --allow-net "" lifts the restriction`)
+	f.StringVar(&mf.state, "state", "", "active, receive-disabled or forbidden")
+	f.BoolVar(&mf.autologin, "webmail-autologin", true, "let the KAS panel log into webmail without the mailbox password")
+	f.BoolVar(&mf.passwordStdin, "password-stdin", false, "read the new mailbox password from stdin")
+	f.StringVar(&mf.responder, "responder", "", "on or off")
+	f.StringVar(&mf.responderText, "responder-text", "", "reply text of the responder")
+	f.StringVar(&mf.responderType, "responder-type", "", "text or html")
+	f.StringVar(&mf.responderName, "responder-name", "", "sender name shown on the reply")
+	f.StringVar(&mf.responderFrom, "responder-from", "", "start of the responder window, RFC 3339 or YYYY-MM-DD")
+	f.StringVar(&mf.responderUntil, "responder-until", "", "end of the responder window, RFC 3339 or YYYY-MM-DD")
+	f.StringSliceVar(&mf.filters, "filter", nil, `standard filters as name or name:action (see "kascli get mailfilters"); --filter "" removes them`)
+}
+
+// mailAccountUpdate is the validated input of "update mailaccount".
+type mailAccountUpdate struct {
+	state     kasapi.MailState
+	responder *kasapi.Responder
+	filters   []kasapi.MailFilter
+	password  string
+}
+
+var mailStates = map[string]kasapi.MailState{
+	"active":           kasapi.MailActive,
+	"receive-disabled": kasapi.MailReceiveDisabled,
+	"forbidden":        kasapi.MailForbidden,
+}
+
+// parse validates every flag, so no request is sent for an invalid command.
+func (mf *mailAccountFlags) parse(fl *pflag.FlagSet) (mailAccountUpdate, error) {
+	var u mailAccountUpdate
+	if fl.Changed("state") {
+		s, ok := mailStates[mf.state]
+		if !ok {
+			return u, errors.New("--state must be active, receive-disabled or forbidden")
+		}
+		u.state = s
+	}
+	resp, err := mf.parseResponder(fl)
+	if err != nil {
+		return u, err
+	}
+	u.responder = resp
+	for _, f := range nonEmpty(mf.filters) {
+		name, action, _ := strings.Cut(f, ":")
+		u.filters = append(u.filters, kasapi.MailFilter{Name: name, Action: action})
+	}
+	if u.password, err = optionalSecret(mf.passwordStdin); err != nil {
+		return u, err
+	}
+	return u, nil
+}
+
+func (mf *mailAccountFlags) parseResponder(fl *pflag.FlagSet) (*kasapi.Responder, error) {
+	if !fl.Changed("responder") {
+		for _, name := range []string{"responder-text", "responder-from", "responder-until", "responder-type", "responder-name"} {
+			if fl.Changed(name) {
+				return nil, errors.New("the responder flags need --responder on")
+			}
+		}
+		return nil, nil
+	}
+	r, err := responderFromFlags(mf.responder, mf.responderText, mf.responderType, mf.responderName, mf.responderFrom, mf.responderUntil)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// updateStep is one request of an update that is sent when its flag was given.
+type updateStep struct {
+	on  bool
+	run func() error
+}
+
+func runSteps(steps []updateStep) error {
+	for _, step := range steps {
+		if !step.on {
+			continue
+		}
+		if err := step.run(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// steps lists the requests of "update mailaccount" in the order they are sent.
+func (mf *mailAccountFlags) steps(ctx context.Context, c *kasapi.Client, fl *pflag.FlagSet, login string, u mailAccountUpdate) []updateStep {
+	return []updateStep{
+		{mf.passwordStdin, func() error { return c.Mail.UpdatePassword(ctx, login, u.password) }},
+		{fl.Changed("copy"), func() error { return c.Mail.UpdateCopyAddresses(ctx, login, nonEmpty(mf.copies)) }},
+		{fl.Changed("sender-alias"), func() error { return c.Mail.UpdateSenderAliases(ctx, login, nonEmpty(mf.aliases)) }},
+		{fl.Changed("allow-net"), func() error { return c.Mail.UpdateAllowNets(ctx, login, nonEmpty(mf.allowNets)) }},
+		{fl.Changed("state"), func() error { return c.Mail.UpdateState(ctx, login, u.state) }},
+		{fl.Changed("webmail-autologin"), func() error { return c.Mail.UpdateWebmailAutologin(ctx, login, mf.autologin) }},
+		{u.responder != nil, func() error { return c.Mail.UpdateResponder(ctx, login, *u.responder) }},
+		{fl.Changed("filter"), func() error {
+			if len(u.filters) == 0 {
+				return c.Mail.DeleteFilters(ctx, login)
+			}
+			return c.Mail.SetFilters(ctx, login, u.filters)
+		}},
+	}
+}
+
 func updateMailAccountCmd(g *globals) *cobra.Command {
-	var (
-		copies, aliases, allowNets, filters []string
-		state                               string
-		autologin, passwordStdin            bool
-		responder                           string
-		responderText, responderType        string
-		responderName, responderFrom        string
-		responderUntil                      string
-	)
+	var mf mailAccountFlags
 	cmd := resourceCmd("mailaccounts", "change a mailbox", true)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if err := noChange(cmd); err != nil {
@@ -711,94 +825,22 @@ func updateMailAccountCmd(g *globals) *cobra.Command {
 		}
 		login := args[0]
 		fl := cmd.Flags()
-
-		// Validate every flag before the first request.
-		var mailState kasapi.MailState
-		if fl.Changed("state") {
-			switch state {
-			case "active":
-				mailState = kasapi.MailActive
-			case "receive-disabled":
-				mailState = kasapi.MailReceiveDisabled
-			case "forbidden":
-				mailState = kasapi.MailForbidden
-			default:
-				return fmt.Errorf("--state must be active, receive-disabled or forbidden")
-			}
+		u, err := mf.parse(fl)
+		if err != nil {
+			return err
 		}
-		var resp *kasapi.Responder
-		if fl.Changed("responder") {
-			r, err := responderFromFlags(responder, responderText, responderType, responderName, responderFrom, responderUntil)
-			if err != nil {
-				return err
-			}
-			resp = &r
-		} else if fl.Changed("responder-text") || fl.Changed("responder-from") || fl.Changed("responder-until") ||
-			fl.Changed("responder-type") || fl.Changed("responder-name") {
-			return errors.New("the responder flags need --responder on")
-		}
-		var mailFilters []kasapi.MailFilter
-		for _, f := range nonEmpty(filters) {
-			name, action, _ := strings.Cut(f, ":")
-			mailFilters = append(mailFilters, kasapi.MailFilter{Name: name, Action: action})
-		}
-		var password string
-		if passwordStdin {
-			var err error
-			if password, err = readSecretLine(); err != nil {
-				return err
-			}
-		}
-
 		client, ctx, cancel, err := newClient(g)
 		if err != nil {
 			return err
 		}
 		defer cancel()
-
-		steps := []struct {
-			on  bool
-			run func() error
-		}{
-			{passwordStdin, func() error { return client.Mail.UpdatePassword(ctx, login, password) }},
-			{fl.Changed("copy"), func() error { return client.Mail.UpdateCopyAddresses(ctx, login, nonEmpty(copies)) }},
-			{fl.Changed("sender-alias"), func() error { return client.Mail.UpdateSenderAliases(ctx, login, nonEmpty(aliases)) }},
-			{fl.Changed("allow-net"), func() error { return client.Mail.UpdateAllowNets(ctx, login, nonEmpty(allowNets)) }},
-			{fl.Changed("state"), func() error { return client.Mail.UpdateState(ctx, login, mailState) }},
-			{fl.Changed("webmail-autologin"), func() error { return client.Mail.UpdateWebmailAutologin(ctx, login, autologin) }},
-			{resp != nil, func() error { return client.Mail.UpdateResponder(ctx, login, *resp) }},
-			{fl.Changed("filter"), func() error {
-				if len(mailFilters) == 0 {
-					return client.Mail.DeleteFilters(ctx, login)
-				}
-				return client.Mail.SetFilters(ctx, login, mailFilters)
-			}},
-		}
-		for _, step := range steps {
-			if !step.on {
-				continue
-			}
-			if err := step.run(); err != nil {
-				return err
-			}
+		if err := runSteps(mf.steps(ctx, client, fl, login, u)); err != nil {
+			return err
 		}
 		fmt.Printf("mailaccount/%s updated\n", login)
 		return nil
 	}
-	f := cmd.Flags()
-	f.StringSliceVar(&copies, "copy", nil, `addresses that receive a copy of incoming mail; --copy "" clears them`)
-	f.StringSliceVar(&aliases, "sender-alias", nil, `addresses the mailbox may send as; --sender-alias "" clears them`)
-	f.StringSliceVar(&allowNets, "allow-net", nil, `clients allowed to access the mailbox: IP, CIDR or webmail; --allow-net "" lifts the restriction`)
-	f.StringVar(&state, "state", "", "active, receive-disabled or forbidden")
-	f.BoolVar(&autologin, "webmail-autologin", true, "let the KAS panel log into webmail without the mailbox password")
-	f.BoolVar(&passwordStdin, "password-stdin", false, "read the new mailbox password from stdin")
-	f.StringVar(&responder, "responder", "", "on or off")
-	f.StringVar(&responderText, "responder-text", "", "reply text of the responder")
-	f.StringVar(&responderType, "responder-type", "", "text or html")
-	f.StringVar(&responderName, "responder-name", "", "sender name shown on the reply")
-	f.StringVar(&responderFrom, "responder-from", "", "start of the responder window, RFC 3339 or YYYY-MM-DD")
-	f.StringVar(&responderUntil, "responder-until", "", "end of the responder window, RFC 3339 or YYYY-MM-DD")
-	f.StringSliceVar(&filters, "filter", nil, `standard filters as name or name:action (see "kascli get mailfilters"); --filter "" removes them`)
+	mf.register(cmd)
 	return cmd
 }
 
@@ -865,42 +907,67 @@ func updateMailForwardCmd(g *globals) *cobra.Command {
 	return cmd
 }
 
+// optionalSecret reads a secret from stdin when on is set.
+func optionalSecret(on bool) (string, error) {
+	if !on {
+		return "", nil
+	}
+	return readSecretLine()
+}
+
+// secretUpdate is an update that changes settings, the password or both.
+type secretUpdate struct {
+	kind          string
+	passwordStdin bool
+	settings      func(context.Context, *kasapi.Client, string) error
+	password      func(context.Context, *kasapi.Client, string, string) error
+}
+
+// run reads the password before the first request, then sends the settings
+// when a flag other than --password-stdin was given, then the password.
+func (su secretUpdate) run(g *globals, cmd *cobra.Command, id string) error {
+	if err := noChange(cmd); err != nil {
+		return err
+	}
+	password, err := optionalSecret(su.passwordStdin)
+	if err != nil {
+		return err
+	}
+	client, ctx, cancel, err := newClient(g)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	err = runSteps([]updateStep{
+		{settingsChanged(cmd, "password-stdin"), func() error { return su.settings(ctx, client, id) }},
+		{su.passwordStdin, func() error { return su.password(ctx, client, id, password) }},
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s/%s updated\n", su.kind, id)
+	return nil
+}
+
 func updateFTPUserCmd(g *globals) *cobra.Command {
 	var ff ftpFlags
 	cmd := resourceCmd("ftpusers", "change an FTP user", true)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		if err := noChange(cmd); err != nil {
-			return err
-		}
-		var password string
-		if ff.passwordStdin {
-			var err error
-			if password, err = readSecretLine(); err != nil {
-				return err
-			}
-		}
-		client, ctx, cancel, err := newClient(g)
-		if err != nil {
-			return err
-		}
-		defer cancel()
-		if settingsChanged(cmd, "password-stdin") {
-			u, err := client.FTP.Get(ctx, args[0])
-			if err != nil {
-				return err
-			}
-			ff.apply(cmd, u)
-			if err := client.FTP.Update(ctx, *u); err != nil {
-				return err
-			}
-		}
-		if ff.passwordStdin {
-			if err := client.FTP.UpdatePassword(ctx, args[0], password); err != nil {
-				return err
-			}
-		}
-		fmt.Printf("ftpuser/%s updated\n", args[0])
-		return nil
+		return secretUpdate{
+			kind:          "ftpuser",
+			passwordStdin: ff.passwordStdin,
+			settings: func(ctx context.Context, c *kasapi.Client, id string) error {
+				u, err := c.FTP.Get(ctx, id)
+				if err != nil {
+					return err
+				}
+				ff.apply(cmd, u)
+				return c.FTP.Update(ctx, *u)
+			},
+			password: func(ctx context.Context, c *kasapi.Client, id, pw string) error {
+				return c.FTP.UpdatePassword(ctx, id, pw)
+			},
+		}.run(g, cmd, args[0])
 	}
 	ff.register(cmd)
 	cmd.Flags().BoolVar(&ff.passwordStdin, "password-stdin", false, "read the new FTP password from stdin")
@@ -920,43 +987,23 @@ func updateDatabaseCmd(g *globals) *cobra.Command {
 	)
 	cmd := resourceCmd("databases", "change a database", true)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		if err := noChange(cmd); err != nil {
-			return err
-		}
-		var password string
-		if passwordStdin {
-			var err error
-			if password, err = readSecretLine(); err != nil {
-				return err
-			}
-		}
-		client, ctx, cancel, err := newClient(g)
-		if err != nil {
-			return err
-		}
-		defer cancel()
-		if settingsChanged(cmd, "password-stdin") {
-			db, err := client.Databases.Get(ctx, args[0])
-			if err != nil {
-				return err
-			}
-			if cmd.Flags().Changed("comment") {
-				db.Comment = comment
-			}
-			if cmd.Flags().Changed("allowed-host") {
-				db.AllowedHosts = nonEmpty(hosts)
-			}
-			if err := client.Databases.Update(ctx, *db); err != nil {
-				return err
-			}
-		}
-		if passwordStdin {
-			if err := client.Databases.UpdatePassword(ctx, args[0], password); err != nil {
-				return err
-			}
-		}
-		fmt.Printf("database/%s updated\n", args[0])
-		return nil
+		return secretUpdate{
+			kind:          "database",
+			passwordStdin: passwordStdin,
+			settings: func(ctx context.Context, c *kasapi.Client, id string) error {
+				db, err := c.Databases.Get(ctx, id)
+				if err != nil {
+					return err
+				}
+				fl := cmd.Flags()
+				setIfChanged(fl, "comment", &db.Comment, comment)
+				setIfChanged(fl, "allowed-host", &db.AllowedHosts, nonEmpty(hosts))
+				return c.Databases.Update(ctx, *db)
+			},
+			password: func(ctx context.Context, c *kasapi.Client, id, pw string) error {
+				return c.Databases.UpdatePassword(ctx, id, pw)
+			},
+		}.run(g, cmd, args[0])
 	}
 	f := cmd.Flags()
 	f.StringVar(&comment, "comment", "", "free text describing the database")
@@ -1005,43 +1052,23 @@ func updateDDNSUserCmd(g *globals) *cobra.Command {
 	)
 	cmd := resourceCmd("ddnsusers", "change a dynamic DNS user", true)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		if err := noChange(cmd); err != nil {
-			return err
-		}
-		var password string
-		if passwordStdin {
-			var err error
-			if password, err = readSecretLine(); err != nil {
-				return err
-			}
-		}
-		client, ctx, cancel, err := newClient(g)
-		if err != nil {
-			return err
-		}
-		defer cancel()
-		if settingsChanged(cmd, "password-stdin") {
-			u, err := client.DDNS.Get(ctx, args[0])
-			if err != nil {
-				return err
-			}
-			if cmd.Flags().Changed("comment") {
-				u.Comment = comment
-			}
-			if cmd.Flags().Changed("dual-stack") {
-				u.DualStack = dualStack
-			}
-			if err := client.DDNS.Update(ctx, *u); err != nil {
-				return err
-			}
-		}
-		if passwordStdin {
-			if err := client.DDNS.UpdatePassword(ctx, args[0], password); err != nil {
-				return err
-			}
-		}
-		fmt.Printf("ddnsuser/%s updated\n", args[0])
-		return nil
+		return secretUpdate{
+			kind:          "ddnsuser",
+			passwordStdin: passwordStdin,
+			settings: func(ctx context.Context, c *kasapi.Client, id string) error {
+				u, err := c.DDNS.Get(ctx, id)
+				if err != nil {
+					return err
+				}
+				fl := cmd.Flags()
+				setIfChanged(fl, "comment", &u.Comment, comment)
+				setIfChanged(fl, "dual-stack", &u.DualStack, dualStack)
+				return c.DDNS.Update(ctx, *u)
+			},
+			password: func(ctx context.Context, c *kasapi.Client, id, pw string) error {
+				return c.DDNS.UpdatePassword(ctx, id, pw)
+			},
+		}.run(g, cmd, args[0])
 	}
 	f := cmd.Flags()
 	f.StringVar(&comment, "comment", "", "free text describing the user")

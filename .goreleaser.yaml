@@ -1,0 +1,56 @@
+# Releases of the kasapi *library* are just git tags (Go modules need nothing
+# more). This config additionally ships prebuilt kascli binaries with each
+# GitHub release for API verification without a Go toolchain: checksums signed
+# keyless with cosign, one SPDX SBOM per archive (syft).
+version: 2
+
+before:
+  hooks:
+    - go mod verify
+
+builds:
+  - id: kascli
+    main: ./cmd/kascli
+    binary: kascli
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{.Version}}"]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files: [LICENSE, NOTICE, README.md]
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+sboms:
+  - id: archives
+    artifacts: archive
+    documents: ["{{ .ArtifactName }}.spdx.json"]
+    cmd: syft
+    args: ["$artifact", "--output", "spdx-json=$document"]
+
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args: ["sign-blob", "--yes", "--bundle=${signature}", "${artifact}"]
+
+changelog:
+  use: github-native
+
+release:
+  footer: |
+    Verify the checksums signature:
+
+        cosign verify-blob --bundle checksums.txt.sigstore.json \
+          --certificate-identity 'https://github.com/johnnycube/kasapi/.github/workflows/release.yml@refs/tags/{{ .Tag }}' \
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+          checksums.txt

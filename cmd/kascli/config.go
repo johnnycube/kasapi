@@ -5,6 +5,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -120,15 +121,58 @@ func newConfigUseContextCmd() *cobra.Command {
 	}
 }
 
+// setContextFlags are the flags of "config set-context".
+type setContextFlags struct {
+	login, authType, password            string
+	passwordStdin, setCurrent, twoFactor bool
+}
+
+// apply sets the given flags on ctx.
+func (sf *setContextFlags) apply(cmd *cobra.Command, ctx *kasconfig.Context) error {
+	if sf.login != "" {
+		ctx.Login = sf.login
+	}
+	if sf.authType != "" {
+		if sf.authType != "sha1" && sf.authType != "plain" {
+			return errors.New("--auth-type must be sha1 or plain")
+		}
+		ctx.AuthType = sf.authType
+	}
+	pw, set, err := sf.newPassword()
+	if err != nil {
+		return err
+	}
+	if set {
+		ctx.Password = pw
+	}
+	if cmd.Flags().Changed("two-factor") {
+		ctx.TwoFactor = sf.twoFactor
+	}
+	if ctx.Login == "" {
+		return errors.New("--login is required for a new context")
+	}
+	return nil
+}
+
+// newPassword returns the password to store and whether one was given.
+func (sf *setContextFlags) newPassword() (string, bool, error) {
+	switch {
+	case sf.password != "" && sf.passwordStdin:
+		return "", false, errors.New("--password and --password-stdin are mutually exclusive")
+	case sf.password != "":
+		return sf.password, true, nil
+	case !sf.passwordStdin:
+		return "", false, nil
+	}
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && line == "" {
+		return "", false, fmt.Errorf("reading password from stdin: %w", err)
+	}
+	return strings.TrimRight(line, "\r\n"), true, nil
+}
+
 func newConfigSetContextCmd(_ *globals) *cobra.Command {
-	var (
-		login         string
-		authType      string
-		password      string
-		passwordStdin bool
-		setCurrent    bool
-		twoFactor     bool
-	)
+	var sf setContextFlags
 	cmd := &cobra.Command{
 		Use:   "set-context NAME",
 		Short: "create or update a context",
@@ -147,36 +191,11 @@ func newConfigSetContextCmd(_ *globals) *cobra.Command {
 			if existing, err := cfg.Get(name); err == nil {
 				ctx = *existing
 			}
-			if login != "" {
-				ctx.Login = login
-			}
-			if authType != "" {
-				if authType != "sha1" && authType != "plain" {
-					return fmt.Errorf("--auth-type must be sha1 or plain")
-				}
-				ctx.AuthType = authType
-			}
-			if password != "" && passwordStdin {
-				return fmt.Errorf("--password and --password-stdin are mutually exclusive")
-			}
-			if password != "" {
-				ctx.Password = password
-			}
-			if passwordStdin {
-				line, err := bufio.NewReader(os.Stdin).ReadString('\n')
-				if err != nil && line == "" {
-					return fmt.Errorf("reading password from stdin: %w", err)
-				}
-				ctx.Password = strings.TrimRight(line, "\r\n")
-			}
-			if cmd.Flags().Changed("two-factor") {
-				ctx.TwoFactor = twoFactor
-			}
-			if ctx.Login == "" {
-				return fmt.Errorf("--login is required for a new context")
+			if err := sf.apply(cmd, &ctx); err != nil {
+				return err
 			}
 			cfg.Set(ctx)
-			if setCurrent || cfg.CurrentContext == "" {
+			if sf.setCurrent || cfg.CurrentContext == "" {
 				cfg.CurrentContext = name
 			}
 			if err := cfg.Save(path); err != nil {
@@ -190,12 +209,12 @@ func newConfigSetContextCmd(_ *globals) *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&login, "login", "", "KAS login, e.g. w0123456")
-	f.StringVar(&authType, "auth-type", "", "sha1 (default) or plain")
-	f.StringVar(&password, "password", "", "store the password in the config file (visible in shell history; prefer --password-stdin or KAS_PASSWORD)")
-	f.BoolVar(&passwordStdin, "password-stdin", false, "read the password to store from stdin")
-	f.BoolVar(&setCurrent, "current", false, "also switch current-context to this context")
-	f.BoolVar(&twoFactor, "two-factor", false, "the account uses two-factor authentication; ask for the one-time PIN on login")
+	f.StringVar(&sf.login, "login", "", "KAS login, e.g. w0123456")
+	f.StringVar(&sf.authType, "auth-type", "", "sha1 (default) or plain")
+	f.StringVar(&sf.password, "password", "", "store the password in the config file (visible in shell history; prefer --password-stdin or KAS_PASSWORD)")
+	f.BoolVar(&sf.passwordStdin, "password-stdin", false, "read the password to store from stdin")
+	f.BoolVar(&sf.setCurrent, "current", false, "also switch current-context to this context")
+	f.BoolVar(&sf.twoFactor, "two-factor", false, "the account uses two-factor authentication; ask for the one-time PIN on login")
 	return cmd
 }
 

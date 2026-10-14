@@ -263,25 +263,30 @@ func (s *MailService) GetAccount(ctx context.Context, login string) (*MailAccoun
 	return nil, ErrNotFound
 }
 
+// validateNewAccount checks a mailbox before add_mailaccount is sent.
+func validateNewAccount(a MailAccount, password string) error {
+	if err := validateAddrParts(a.LocalPart, a.Domain); err != nil {
+		return err
+	}
+	if password == "" {
+		return errors.New("kasapi: mail account password must not be empty")
+	}
+	if err := validateAddressList("copy address", a.CopyAddresses); err != nil {
+		return err
+	}
+	if err := validateAddressList("sender alias", a.SenderAliases); err != nil {
+		return err
+	}
+	if err := a.Responder.validate(); err != nil {
+		return err
+	}
+	return validateAllowNets(a.AllowNets)
+}
+
 // CreateAccount creates a mailbox for localPart@domain and returns the
 // KAS-assigned login. The password is used only for this call.
 func (s *MailService) CreateAccount(ctx context.Context, a MailAccount, password string) (string, error) {
-	if err := validateAddrParts(a.LocalPart, a.Domain); err != nil {
-		return "", err
-	}
-	if password == "" {
-		return "", errors.New("kasapi: mail account password must not be empty")
-	}
-	if err := validateAddressList("copy address", a.CopyAddresses); err != nil {
-		return "", err
-	}
-	if err := validateAddressList("sender alias", a.SenderAliases); err != nil {
-		return "", err
-	}
-	if err := a.Responder.validate(); err != nil {
-		return "", err
-	}
-	if err := validateAllowNets(a.AllowNets); err != nil {
+	if err := validateNewAccount(a, password); err != nil {
 		return "", err
 	}
 
