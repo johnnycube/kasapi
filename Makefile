@@ -16,7 +16,7 @@ GOVULNCHECK_VERSION ?= v1.9.0
 # renovate: datasource=go depName=github.com/google/go-licenses/v2
 GO_LICENSES_VERSION ?= v2.0.1
 # renovate: datasource=go depName=github.com/fleetlint/fleetlint
-FLEETLINT_VERSION   ?= v0.4.0
+FLEETLINT_VERSION   ?= v0.5.1
 # Tools are built with this module's toolchain: golangci-lint refuses code that targets a newer Go than it was built with.
 TOOLCHAIN   := $(shell go env GOVERSION)
 
