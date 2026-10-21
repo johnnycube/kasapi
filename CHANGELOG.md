@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.4 — 2026-10-21
+
+Build only. `go.mod` sets `toolchain go1.27.3`, so CI and the release build
+kascli with Go 1.27.3 and its crypto/x509 fix (GO-2026-6809, CVE-2026-111943:
+compromised intermediate certificates are distrusted). `golang.org/x/term`
+moves to v0.47.0 and `golang.org/x/sys` to v0.49.0. The `go` directive stays
+at 1.26.0. No code changes.
+
 ## v0.3.3 — 2026-10-14
 
 Release integrity. No changes to the library API or to kascli behavior.
