@@ -43,19 +43,24 @@ without a service is reachable through the same `Exec`, from code and from
 
 1. A service method validates its input and builds the request parameters.
    Invalid input fails before any request is sent.
-2. `Client.Exec` takes the client mutex. Calls serialize because the API
-   requires it: every response carries a `KasFloodDelay` the next request
-   must wait for.
+2. `Client.Exec` takes the client's turn, a context-aware mutex. Calls
+   serialize because the API requires it: every response carries a
+   `KasFloodDelay` the next request must wait for. A caller whose context
+   ends while waiting gives up without a request.
 3. The client waits out the flood window, then creates or reuses a session.
    `KasAuth` returns a token; `Config.OTP` supplies the PIN on each handshake
-   of a two-factor account.
-4. `soapCall` posts the JSON payload inside a SOAP envelope, reads a
-   size-limited response and decodes it into a generic tree: apache maps become
-   `map[string]any`, SOAP-ENC arrays `[]any`, scalars `string`.
-5. A SOAP fault becomes an `*APIError`. An expired session triggers one
-   re-authentication and a retry; `flood_protection` is retried with bounded
-   backoff. `params.go` maps the fault codes that mean "absent" to
-   `ErrNotFound` and `nothing_to_do` to success.
+   of a two-factor account. A session is trusted for its lifetime less a
+   margin and extended on every successful call, as KAS does on its side.
+4. `soapCall` posts the JSON payload inside a SOAP envelope over a client
+   that refuses redirects, reads a size-limited response and decodes it in
+   strict XML mode into a generic tree: apache maps become `map[string]any`,
+   SOAP-ENC arrays `[]any`, scalars `string`.
+5. A SOAP fault becomes an `*APIError`. A session the API rejects triggers
+   one re-authentication and a retry; a handshake KAS rejects does not.
+   `flood_protection` is retried with bounded backoff. The flood delay is read
+   from `Response`, where KAS reports it. `params.go` maps an explicit list
+   of the fault codes that name a missing object to `ErrNotFound` and
+   `nothing_to_do` to success.
 6. The service converts the generic value into its typed result.
 
 ## Decisions
@@ -69,4 +74,11 @@ without a service is reachable through the same `Exec`, from code and from
   callers do not need to know the rule.
 - **Secrets are write-only.** KAS returns passwords and the TLS private key in
   `get_*` responses. The services do not map them, so they cannot leak into
-  logs, Terraform state or `kascli get -o yaml`.
+  logs, Terraform state or `kascli get -o yaml`; `kascli exec` redacts them.
+  Every response also echoes the request, passwords included, so an error
+  about a malformed response names its shape, never its content.
+- **Not-found is an explicit list.** `ErrNotFound` is the contract consumers
+  drop state on, so it comes from the fault codes that name the addressed
+  object, taken from the KAS docs and recorded responses. A code about a
+  missing prerequisite is returned as the fault it is; an undocumented code
+  surfaces rather than being guessed.
