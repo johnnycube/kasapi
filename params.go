@@ -41,15 +41,34 @@ func listItems(ret any) []map[string]any {
 	return out
 }
 
+// notFoundCodes are the KAS faults that report the addressed object as
+// absent, from the KAS docs and recorded responses. Faults about a missing
+// prerequisite (kas_login_not_found, email_domain_doesnt_exist,
+// filter_doesnt_exist, ...) are deliberately not here: the object may well
+// exist, and a consumer that drops state on ErrNotFound must not be misled.
+var notFoundCodes = map[string]bool{
+	"record_id_not_found": true, "zone_not_found": true,
+	"domain_not_found_in_kas":    true,
+	"subdomain_not_found_in_kas": true, "subdomain_not_found": true,
+	// KAS sends both spellings.
+	"subdomain_doesnt_exist": true, "subdomain_doenst_exist": true,
+	"mail_login_not_found": true, "mailaccount_not_found": true,
+	// The standard filter actions name the mail login this way.
+	"login_not_found":        true,
+	"mail_forward_not_found": true, "mail_forward_not_found_in_kas": true,
+	"ftp_login_not_found":      true,
+	"database_login_not_found": true,
+	"cronjob_not_found":        true, "cronjob_id_not_found": true,
+	"dyndns_login_not_found":  true,
+	"mailinglist_not_found":   true,
+	"samba_login_not_found":   true,
+	"account_login_not_found": true,
+}
+
 // isNotFound reports whether err is a KAS fault naming a missing object.
 func isNotFound(err error) bool {
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) {
-		return false
-	}
-	return strings.Contains(apiErr.Code, "not_found") ||
-		strings.Contains(apiErr.Code, "doesnt_exist") ||
-		strings.Contains(apiErr.Code, "doenst_exist")
+	return errors.As(err, &apiErr) && notFoundCodes[apiErr.Code]
 }
 
 // isEmptyList reports whether err is the "empty_list" fault.

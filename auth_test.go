@@ -88,9 +88,9 @@ func TestAuth_OTP(t *testing.T) {
 		t.Fatalf("a live session must not ask again, asked %d times", asked)
 	}
 	// A new session needs a fresh PIN.
-	c.mu.Lock()
+	_ = c.lock(ctx)
 	c.token = ""
-	c.mu.Unlock()
+	c.unlock()
 	if _, err := c.Exec(ctx, "noop", nil); err != nil {
 		t.Fatalf("Exec after session loss: %v", err)
 	}

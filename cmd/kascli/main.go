@@ -153,11 +153,27 @@ type credentials struct {
 	twoFactor                 bool
 }
 
+// loadConfig reads the kasconfig and returns it with its path.
+func loadConfig() (*kasconfig.Config, string, error) {
+	path, err := kasconfig.Path()
+	if err != nil {
+		return nil, "", err
+	}
+	cfg, err := kasconfig.Load(path)
+	if err != nil {
+		return nil, "", err
+	}
+	return cfg, path, nil
+}
+
 // currentContext returns the selected context, or nil when none is set.
 func currentContext(g *globals) (*kasconfig.Context, error) {
-	cfg, err := kasconfig.Load(kasconfig.Path())
+	cfg, path, err := loadConfig()
 	if err != nil {
 		return nil, err
+	}
+	if cfg.LoosePermissions() {
+		fmt.Fprintf(os.Stderr, "warning: %s stores a password and is readable by other users; run: chmod 600 %s\n", path, path)
 	}
 	name := g.context
 	if name == "" {

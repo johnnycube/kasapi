@@ -83,13 +83,9 @@ func (s *SubdomainService) Get(ctx context.Context, fqdn string) (*Subdomain, er
 	return nil, ErrNotFound
 }
 
-// Create adds the subdomain name.domain with an optional document root path.
-func (s *SubdomainService) Create(ctx context.Context, name, domain, path string) error {
-	return s.CreateWithSettings(ctx, name, domain, HostSettings{Path: path})
-}
-
-// CreateWithSettings adds the subdomain name.domain. KAS rejects Active on create.
-func (s *SubdomainService) CreateWithSettings(ctx context.Context, name, domain string, hs HostSettings) error {
+// Create adds the subdomain name.domain with the given settings; the zero
+// HostSettings leaves the KAS defaults. KAS rejects Active on create.
+func (s *SubdomainService) Create(ctx context.Context, name, domain string, hs HostSettings) error {
 	if name == "" || domain == "" {
 		return errors.New("kasapi: subdomain name and domain must not be empty")
 	}

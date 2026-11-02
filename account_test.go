@@ -306,6 +306,9 @@ func TestAccounts_UpdateSettings(t *testing.T) {
 	got = rec.last(t, "update_accountsettings")
 	wantParams(t, got, map[string]string{"account_password": "N3w!"})
 	wantAbsent(t, got, "logage")
+	if c.cfg.Password != "N3w!" {
+		t.Fatalf("the client must log in with the new password from now on, has %q", c.cfg.Password)
+	}
 
 	before := rec.count("update_accountsettings")
 	if err := c.Accounts.UpdateSettings(ctx, AccountOptions{}); err == nil {

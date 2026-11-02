@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -76,7 +77,7 @@ func cmdGet(g *globals, args []string, opts getOptions) error {
 
 	get, ok := getters[res]
 	if !ok {
-		return nil
+		return fmt.Errorf("cannot get %q (see kascli api-resources)", args[0])
 	}
 	l, err := get(getRequest{getOptions: opts, ctx: ctx, client: client, args: args})
 	if err != nil {
@@ -145,14 +146,14 @@ func getMailAccounts(r getRequest) (listing, error) {
 		func(a kasapi.MailAccount) row {
 			return row{
 				name:  "mailaccount/" + a.Login,
-				cells: []string{a.Login, a.Address(), boolWord(a.ResponderActive)},
+				cells: []string{a.Login, a.Address(), boolWord(a.Responder.Active)},
 				wideCells: []string{
 					strings.Join(a.CopyAddresses, ","), strings.Join(a.SenderAliases, ","),
 					mailStateWord(a.State), strings.Join(a.AllowNets, ","), strings.Join(a.SpamFilters, ","),
 				},
 				object: map[string]any{
 					"login": a.Login, "address": a.Address(),
-					"responderActive":  a.ResponderActive,
+					"responderActive":  a.Responder.Active,
 					"responder":        responderObject(a.Responder),
 					"copyAddresses":    anySlice(a.CopyAddresses),
 					"senderAliases":    anySlice(a.SenderAliases),

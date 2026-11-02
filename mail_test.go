@@ -316,7 +316,7 @@ func TestMail_AccountMapsAllFields(t *testing.T) {
 		End:    time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
 		Text:   "Back in February.", ContentType: "html", DisplayName: "Info",
 	}
-	if !reflect.DeepEqual(a.Responder, wantResponder) || !a.ResponderActive {
+	if !reflect.DeepEqual(a.Responder, wantResponder) {
 		t.Fatalf("responder: got %+v, want %+v", a.Responder, wantResponder)
 	}
 }
@@ -343,6 +343,15 @@ func TestMailStateFrom(t *testing.T) {
 		if got := mailStateFrom(raw); got != want {
 			t.Errorf("mailStateFrom(%#v) = %q, want %q", raw, got, want)
 		}
+	}
+}
+
+func TestMail_CreateAccountIgnoresStructuredAnswer(t *testing.T) {
+	// A map or list in ReturnInfo is not a login; the address lookup decides.
+	c, _ := newFake(t, map[string]string{"add_mailaccount": entry("Msg", "ok"), "get_mailaccounts": mailEntry("m1", "info@example.com")})
+	login, err := c.Mail.CreateAccount(context.Background(), MailAccount{LocalPart: "info", Domain: "example.com"}, "pw")
+	if err != nil || login != "m1" {
+		t.Fatalf("CreateAccount: %q %v", login, err)
 	}
 }
 

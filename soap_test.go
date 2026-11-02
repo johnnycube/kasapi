@@ -139,6 +139,34 @@ func TestToValue_Shapes(t *testing.T) {
 	}
 }
 
+// FuzzParseXMLTree feeds arbitrary bodies through the decoder and the shape
+// conversion: the only code that consumes network input must never panic.
+func FuzzParseXMLTree(f *testing.F) {
+	for _, seed := range []string{
+		`<r><return><item><key>Response</key><value><item><key>ReturnString</key><value>TRUE</value></item>` +
+			`<item><key>ReturnInfo</key><value><item><item><key>k</key><value>v</value></item></item></value></item></value></item></return></r>`,
+		`<r><return xsi:type="xsd:string">tok</return></r>`,
+		`<e><Body><Fault><faultcode>SOAP-ENV:Server</faultcode><faultstring>x</faultstring></Fault></Body></e>`,
+		`<r><return><a>1</a><b>2</b><b>3</b></return></r>`,
+		`<r><return><item>a</item><item>b</item></return></r>`,
+		"", "<", "<a><b></a>", "<a>&amp;&lt;</a>", `<?xml version="1.0"?><a/>`,
+	} {
+		f.Add([]byte(seed))
+	}
+	f.Fuzz(func(_ *testing.T, raw []byte) {
+		root, err := parseXMLTree(raw)
+		if err != nil {
+			return
+		}
+		if ret := root.find("return"); ret != nil {
+			_ = ret.toValue()
+		}
+		if fault := root.find("Fault"); fault != nil {
+			_ = fault.childText("faultstring")
+		}
+	})
+}
+
 func TestXMLNodeHelpers(t *testing.T) {
 	root, err := parseXMLTree([]byte(`<a><b>text</b><c><d>deep</d></c></a>`))
 	if err != nil {

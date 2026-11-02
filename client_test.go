@@ -5,6 +5,7 @@ package kasapi
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net/http"
@@ -99,9 +100,9 @@ func TestExec_ReauthenticatesOnExpiredSession(t *testing.T) {
 	}
 	// Corrupt the cached token; the server answers session_expired and the
 	// client must re-auth transparently.
-	c.mu.Lock()
+	_ = c.lock(context.Background())
 	c.token = "stale-token"
-	c.mu.Unlock()
+	c.unlock()
 
 	if _, err := c.Exec(context.Background(), "noop", nil); err != nil {
 		t.Fatalf("Exec after expiry: %v", err)
@@ -212,8 +213,12 @@ func TestNew_Defaults(t *testing.T) {
 	if c.cfg.APIEndpoint != DefaultAPIEndpoint || c.cfg.AuthEndpoint != DefaultAuthEndpoint {
 		t.Fatalf("unexpected endpoints: %+v", c.cfg)
 	}
-	if c.http == nil || c.http.Timeout != 60*time.Second {
+	if c.http == nil || c.http.Timeout != 60*time.Second || c.http.CheckRedirect == nil {
 		t.Fatalf("unexpected default HTTP client: %+v", c.http)
+	}
+	transport, _ := c.http.Transport.(*http.Transport)
+	if transport == nil || transport.Proxy == nil || transport.TLSClientConfig.MinVersion != tls.VersionTLS12 {
+		t.Fatalf("the default transport must keep the proxy settings and require TLS 1.2: %+v", transport)
 	}
 	for name, svc := range map[string]any{
 		"DNS": c.DNS, "Mail": c.Mail, "Subdomains": c.Subdomains, "Domains": c.Domains,
@@ -280,10 +285,10 @@ func TestExec_TransportErrors(t *testing.T) {
 		t.Fatalf("expected a request error, got %v", err)
 	}
 
-	// An endpoint that is not a URL.
-	c, _ = New(Config{Login: "w1", Password: "p", APIEndpoint: "://", AuthEndpoint: "://"})
-	if _, err := c.Exec(ctx, "noop", nil); err == nil || !strings.Contains(err.Error(), "building request") {
-		t.Fatalf("expected a build error, got %v", err)
+	// An endpoint that is not a URL is refused by New.
+	if _, err := New(Config{Login: "w1", Password: "p", APIEndpoint: "://", AuthEndpoint: "://"}); err == nil ||
+		!strings.Contains(err.Error(), "endpoint") {
+		t.Fatalf("expected an endpoint error, got %v", err)
 	}
 
 	// Parameters that cannot be encoded.

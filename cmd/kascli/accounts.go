@@ -100,7 +100,7 @@ func getAccountResources(r getRequest) (listing, error) {
 		return listing{}, err
 	}
 	var rows []row
-	for _, l := range kasapi.AccountLimits {
+	for _, l := range kasapi.AccountLimits() {
 		u, ok := res[l]
 		if !ok {
 			continue
@@ -264,8 +264,9 @@ type accountFlags struct {
 func (af *accountFlags) register(cmd *cobra.Command) {
 	f := cmd.Flags()
 	af.accountOptionFlags.register(f)
-	names := make([]string, 0, len(kasapi.AccountLimits))
-	for _, l := range kasapi.AccountLimits {
+	limits := kasapi.AccountLimits()
+	names := make([]string, 0, len(limits))
+	for _, l := range limits {
 		names = append(names, limitName(l))
 	}
 	f.StringToIntVar(&af.limits, "limit", nil, "resource limits, e.g. subdomain=10,webspace=8192 (MB); names: "+strings.Join(names, ", "))
@@ -301,7 +302,7 @@ func (af *accountFlags) change(fl *pflag.FlagSet) (kasapi.AccountChange, error) 
 }
 
 func knownLimitName(l kasapi.AccountLimit) bool {
-	for _, k := range kasapi.AccountLimits {
+	for _, k := range kasapi.AccountLimits() {
 		if k == l {
 			return true
 		}

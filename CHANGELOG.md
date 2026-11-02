@@ -1,5 +1,73 @@
 # Changelog
 
+## v0.6.0 — 2026-11-02
+
+Hardening and API clean-up ahead of v1.0.0. The breaking changes are the
+last ones planned before v1; terraform-provider-allinkl and
+cert-manager-webhook-all-inkl need the matching edits when they move to this
+release.
+
+Breaking:
+
+- `Subdomains.Create` takes a `HostSettings` instead of a path;
+  `CreateWithSettings` is gone.
+- `Cronjobs.Create` and `Cronjobs.Update` take the HTTP basic auth password
+  as an argument; `Cronjob.HTTPPassword` is gone, so no object struct carries
+  a secret.
+- `MailAccount.ResponderActive` is gone; `Responder.Active` says the same.
+- `AccountLimits` is a function that returns a copy, not a mutable slice.
+- `New` refuses endpoints that are not https, except on the loopback
+  interface, and reports a malformed endpoint at once instead of on the
+  first call.
+- `ErrNotFound` comes from an explicit list of the KAS fault codes that name
+  the addressed object (`record_id_not_found`, `ftp_login_not_found`, ...).
+  A fault about a missing prerequisite, such as `kas_login_not_found` or
+  `email_domain_doesnt_exist`, is returned as the `*APIError` it is. Before,
+  any code containing `not_found` or `doesnt_exist` passed as a missing
+  object, which could make a consumer drop state it should have kept.
+- `kasapitest` answers in the layout of a real KAS response: the request is
+  echoed, parameters included, and `KasFloodDelay` sits inside `Response`.
+  `Server.FloodDelay` sets it.
+
+Fixed:
+
+- The flood delay is read where KAS reports it, inside `Response`. The client
+  read the top level, which never carries it, so every call waited the 2 s
+  default; now it waits what the server asks for.
+- A malformed response is reported by its shape, never its content. KAS
+  echoes the request parameters, passwords included, in every response, and
+  the error message used to print them.
+- The default HTTP client does not follow redirects, which would have posted
+  the credentials to the redirect target. It starts from Go's default
+  transport, so the proxy settings and dial timeouts of the environment apply.
+- `DNS.Create` and `Mail.CreateAccount` fall back to the lookup when KAS
+  answers with a structure instead of an id; they used to return the
+  structure's text as the id.
+- A handshake KAS rejects is not retried with the same credentials.
+- A session is extended on use, as KAS does with `session_update_lifetime`,
+  and a lifetime of a minute or less no longer logs in on every call.
+- `Accounts.UpdateOwnPassword` updates the stored password, so the client
+  logs in again without a new `Client`.
+- A call waiting for its turn on the client stops when its context ends.
+- Responses are parsed in strict XML mode: every recorded KAS response parses
+  strictly, so a malformed body is an error rather than a guessed tree. A
+  fuzz test drives the decoder.
+- `DNS.Update`, `Mail.UpdateForward` and the mailbox updates report a missing
+  object as `ErrNotFound` like every other update.
+
+kascli:
+
+- `exec` redacts the passwords and the TLS private key KAS returns in `get_*`
+  responses; `--raw` prints them.
+- `get` on a resource without a getter is an error instead of silence.
+- The config file is written atomically and gets mode 0600 back on every
+  save; a world-readable file that stores a password is warned about. Without
+  a home directory and `KASCONFIG`, kascli fails instead of writing
+  credentials into the working directory.
+
+Docs: the CI badge, the Go support policy, the error convention, examples on
+pkg.go.dev, and that SHA1 authentication is not a security property.
+
 ## v0.4.0 — 2026-11-02
 
 Typed services for the remaining KAS objects the API can read back. Request

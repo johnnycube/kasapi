@@ -40,9 +40,7 @@ type MailAccount struct {
 	// when sending. To receive mail under an alias, create a MailForward
 	// pointing at this mailbox instead.
 	SenderAliases []string
-	// ResponderActive reports whether an autoresponder is enabled.
-	ResponderActive bool
-	// Responder is the autoresponder configuration.
+	// Responder is the autoresponder; Responder.Active tells whether it is on.
 	Responder Responder
 	// State reports whether the mailbox receives mail and allows retrieval.
 	State MailState
@@ -160,7 +158,6 @@ func mailAccountFrom(m map[string]any) MailAccount {
 		WebmailAutologin: isYes(m["webmail_autologin"]),
 		InProgress:       isYes(m["in_progress"]),
 	}
-	acc.ResponderActive = acc.Responder.Active
 	// mail_adresses lists the addresses bound to the account.
 	if addrs := splitAddressList(asString(m["mail_adresses"])); len(addrs) > 0 {
 		if lp, dom, ok := strings.Cut(addrs[0], "@"); ok {
@@ -313,7 +310,7 @@ func (s *MailService) CreateAccount(ctx context.Context, a MailAccount, password
 		return "", fmt.Errorf("creating mail account %s: %w", a.Address(), err)
 	}
 
-	if login := asString(ret); login != "" && login != "TRUE" {
+	if login := createdID(ret); login != "" {
 		return login, nil
 	}
 
@@ -327,44 +324,24 @@ func (s *MailService) CreateAccount(ctx context.Context, a MailAccount, password
 			return acc.Login, nil
 		}
 	}
-	return "", fmt.Errorf("account %s created but not found afterwards", a.Address())
+	return "", fmt.Errorf("kasapi: account %s created but not found afterwards", a.Address())
 }
 
 // UpdatePassword changes the mailbox password.
 func (s *MailService) UpdatePassword(ctx context.Context, login, newPassword string) error {
-	if login == "" {
-		return errors.New("kasapi: mail login must not be empty")
-	}
 	if newPassword == "" {
 		return errors.New("kasapi: new password must not be empty")
 	}
-	_, err := s.c.Exec(ctx, "update_mailaccount", map[string]any{
-		"mail_login":        login,
-		"mail_new_password": newPassword,
-	})
-	if err != nil && !isNothingToDo(err) {
-		return fmt.Errorf("updating password of mail account %s: %w", login, err)
-	}
-	return nil
+	return s.updateAccount(ctx, login, "password", map[string]any{"mail_new_password": newPassword})
 }
 
 // UpdateCopyAddresses replaces the copy address list of a mailbox. An empty
 // list clears it.
 func (s *MailService) UpdateCopyAddresses(ctx context.Context, login string, copyAddresses []string) error {
-	if login == "" {
-		return errors.New("kasapi: mail login must not be empty")
-	}
 	if err := validateAddressList("copy address", copyAddresses); err != nil {
 		return err
 	}
-	_, err := s.c.Exec(ctx, "update_mailaccount", map[string]any{
-		"mail_login":  login,
-		"copy_adress": strings.Join(copyAddresses, ","),
-	})
-	if err != nil && !isNothingToDo(err) {
-		return fmt.Errorf("updating copy addresses of mail account %s: %w", login, err)
-	}
-	return nil
+	return s.updateAccount(ctx, login, "copy addresses", map[string]any{"copy_adress": strings.Join(copyAddresses, ",")})
 }
 
 // UpdateSenderAliases replaces the sender alias list of a mailbox — the
@@ -372,20 +349,10 @@ func (s *MailService) UpdateCopyAddresses(ctx context.Context, login string, cop
 // it. Aliases only affect sending; to receive mail under an alias, create a
 // MailForward pointing at the mailbox.
 func (s *MailService) UpdateSenderAliases(ctx context.Context, login string, aliases []string) error {
-	if login == "" {
-		return errors.New("kasapi: mail login must not be empty")
-	}
 	if err := validateAddressList("sender alias", aliases); err != nil {
 		return err
 	}
-	_, err := s.c.Exec(ctx, "update_mailaccount", map[string]any{
-		"mail_login":        login,
-		"mail_sender_alias": strings.Join(aliases, ","),
-	})
-	if err != nil && !isNothingToDo(err) {
-		return fmt.Errorf("updating sender aliases of mail account %s: %w", login, err)
-	}
-	return nil
+	return s.updateAccount(ctx, login, "sender aliases", map[string]any{"mail_sender_alias": strings.Join(aliases, ",")})
 }
 
 // addResponderParams sets the responder request parameters.
@@ -561,17 +528,8 @@ func (s *MailService) DeleteAccount(ctx context.Context, login string) error {
 	if login == "" {
 		return errors.New("kasapi: mail login must not be empty")
 	}
-	_, err := s.c.Exec(ctx, "delete_mailaccount", map[string]any{
-		"mail_login": login,
-	})
-	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && strings.Contains(apiErr.Code, "not_found") {
-			return ErrNotFound
-		}
-		return fmt.Errorf("deleting mail account %s: %w", login, err)
-	}
-	return nil
+	err := s.c.remove(ctx, "delete_mailaccount", map[string]any{"mail_login": login})
+	return wrapHostErr("deleting mail account", login, err)
 }
 
 // --- forwards ----------------------------------------------------------------
@@ -666,11 +624,7 @@ func (s *MailService) UpdateForward(ctx context.Context, f MailForward) error {
 		"mail_forward": f.Source(),
 	}
 	addTargetParams(params, f.Targets)
-	_, err := s.c.Exec(ctx, "update_mailforward", params)
-	if err != nil && !isNothingToDo(err) {
-		return fmt.Errorf("updating mail forward %s: %w", f.Source(), err)
-	}
-	return nil
+	return wrapHostErr("updating mail forward", f.Source(), s.c.update(ctx, "update_mailforward", params))
 }
 
 // DeleteForward removes a forward by its source address.
@@ -678,17 +632,8 @@ func (s *MailService) DeleteForward(ctx context.Context, source string) error {
 	if source == "" {
 		return errors.New("kasapi: forward source must not be empty")
 	}
-	_, err := s.c.Exec(ctx, "delete_mailforward", map[string]any{
-		"mail_forward": source,
-	})
-	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && strings.Contains(apiErr.Code, "not_found") {
-			return ErrNotFound
-		}
-		return fmt.Errorf("deleting mail forward %s: %w", source, err)
-	}
-	return nil
+	err := s.c.remove(ctx, "delete_mailforward", map[string]any{"mail_forward": source})
+	return wrapHostErr("deleting mail forward", source, err)
 }
 
 // --- helpers ------------------------------------------------------------------

@@ -13,10 +13,18 @@ import (
 func TestFloodDelay(t *testing.T) {
 	c, _ := New(Config{Login: "w1", Password: "p"})
 
+	// KAS reports the delay inside Response.
 	before := time.Now()
-	c.applyFloodDelayLocked(map[string]any{"KasFloodDelay": "0.5"})
+	c.applyFloodDelayLocked(map[string]any{"Response": map[string]any{"KasFloodDelay": "0.5", "ReturnString": "TRUE"}})
 	if d := c.notBefore.Sub(before); d < 400*time.Millisecond || d > 700*time.Millisecond {
 		t.Fatalf("delay of 0.5s applied as %v", d)
+	}
+
+	// A top-level value is read as a fallback.
+	before = time.Now()
+	c.applyFloodDelayLocked(map[string]any{"KasFloodDelay": "0.5"})
+	if d := c.notBefore.Sub(before); d < 400*time.Millisecond || d > 700*time.Millisecond {
+		t.Fatalf("top-level delay of 0.5s applied as %v", d)
 	}
 
 	// A response without the field gets the conservative default.

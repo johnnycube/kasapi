@@ -263,7 +263,7 @@ func createSubdomainCmd(g *globals) *cobra.Command {
 			return err
 		}
 		defer cancel()
-		if err := client.Subdomains.CreateWithSettings(ctx, name, domain, host.settings(cmd)); err != nil {
+		if err := client.Subdomains.Create(ctx, name, domain, host.settings(cmd)); err != nil {
 			return err
 		}
 		fmt.Printf("subdomain/%s.%s created\n", name, domain)
@@ -449,14 +449,12 @@ func createCronjobCmd(g *globals) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		job := cf.job
-		job.HTTPPassword = password
 		client, ctx, cancel, err := newClient(g)
 		if err != nil {
 			return err
 		}
 		defer cancel()
-		id, err := client.Cronjobs.Create(ctx, job)
+		id, err := client.Cronjobs.Create(ctx, cf.job, password)
 		if err != nil {
 			return err
 		}
@@ -1042,8 +1040,7 @@ func updateCronjobCmd(g *globals) *cobra.Command {
 			return err
 		}
 		cf.apply(cmd, job)
-		job.HTTPPassword = password
-		if err := client.Cronjobs.Update(ctx, *job); err != nil {
+		if err := client.Cronjobs.Update(ctx, *job, password); err != nil {
 			return err
 		}
 		fmt.Printf("cronjob/%s updated\n", job.ID)

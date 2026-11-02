@@ -43,11 +43,15 @@ const (
 	LimitWBKs         AccountLimit = "max_wbk"
 )
 
-// AccountLimits lists every AccountLimit.
-var AccountLimits = []AccountLimit{
+var accountLimits = []AccountLimit{
 	LimitSubaccounts, LimitDomains, LimitSubdomains, LimitWebspace,
 	LimitMailAccounts, LimitMailForwards, LimitMailingLists, LimitDatabases,
 	LimitFTPUsers, LimitSambaUsers, LimitCronjobs, LimitWBKs,
+}
+
+// AccountLimits lists every AccountLimit, in the order KAS shows them.
+func AccountLimits() []AccountLimit {
+	return append([]AccountLimit(nil), accountLimits...)
 }
 
 // limitAliases are the names get_accounts reports two limits under. The
@@ -210,7 +214,7 @@ func subaccountFrom(m map[string]any) Subaccount {
 		TwoFactor:           isYes(m["account_2fa"]),
 		InProgress:          isYes(m["in_progress"]),
 	}
-	for _, l := range AccountLimits {
+	for _, l := range accountLimits {
 		if v, ok := m[string(l)]; ok {
 			a.Limits[l] = asInt(v)
 		}
@@ -289,7 +293,7 @@ func (ch AccountChange) params(params map[string]any) {
 }
 
 func knownLimit(l AccountLimit) bool {
-	for _, k := range AccountLimits {
+	for _, k := range accountLimits {
 		if k == l {
 			return true
 		}
@@ -454,7 +458,8 @@ func (s *AccountService) Settings(ctx context.Context) (*AccountSettings, error)
 		m = inner
 	}
 	if m == nil {
-		return nil, fmt.Errorf("kasapi: account settings: unexpected response %v", ret)
+		// The response may carry the account password; name its shape only.
+		return nil, fmt.Errorf("kasapi: account settings: unexpected response, %s", shapeOf(ret))
 	}
 	a := subaccountFrom(m)
 	return &AccountSettings{
@@ -507,7 +512,7 @@ func (s *AccountService) UpdateSettings(ctx context.Context, o AccountOptions) e
 }
 
 // UpdateOwnPassword changes the KAS password of the logged-in account. The
-// client keeps Config.Password; create a new Client to log in again.
+// client logs in with the new password from then on.
 func (s *AccountService) UpdateOwnPassword(ctx context.Context, newPassword string) error {
 	if newPassword == "" {
 		return errors.New("kasapi: new password must not be empty")
@@ -516,6 +521,7 @@ func (s *AccountService) UpdateOwnPassword(ctx context.Context, newPassword stri
 	if err != nil {
 		return fmt.Errorf("updating account password: %w", err)
 	}
+	s.c.setPassword(newPassword)
 	return nil
 }
 

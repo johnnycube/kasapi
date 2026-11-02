@@ -10,7 +10,7 @@ import (
 
 // Every KasApi response carries a KasFloodDelay (seconds) that must elapse
 // before the next request, or the API answers with a "flood_protection" fault.
-// The client honors it proactively. Both helpers require c.mu.
+// The client honors it proactively. Both helpers require c.sem.
 
 func (c *Client) waitForFloodWindowLocked(ctx context.Context) error {
 	wait := time.Until(c.notBefore)
@@ -27,11 +27,19 @@ func (c *Client) waitForFloodWindowLocked(ctx context.Context) error {
 	}
 }
 
-func (c *Client) applyFloodDelayLocked(top map[string]any) {
-	if top == nil {
+// applyFloodDelayLocked reads KasFloodDelay from a decoded KasApi response.
+// KAS reports it inside Response, next to ReturnString; the top level is read
+// as a fallback.
+func (c *Client) applyFloodDelayLocked(ret any) {
+	top, ok := ret.(map[string]any)
+	if !ok {
 		return
 	}
-	delay := asFloat(top["KasFloodDelay"])
+	response, _ := top["Response"].(map[string]any)
+	delay := asFloat(response["KasFloodDelay"])
+	if delay <= 0 {
+		delay = asFloat(top["KasFloodDelay"])
+	}
 	if delay <= 0 {
 		delay = 2 // conservative default between writes
 	}

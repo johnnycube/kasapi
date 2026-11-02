@@ -43,13 +43,19 @@ func TestListItems(t *testing.T) {
 }
 
 func TestFaultClassification(t *testing.T) {
-	notFound := []string{"zone_not_found", "cronjob_id_not_found", "email_domain_doesnt_exist", "subdomain_doenst_exist"}
+	notFound := []string{"zone_not_found", "cronjob_id_not_found", "subdomain_doesnt_exist", "subdomain_doenst_exist", "login_not_found"}
 	for _, code := range notFound {
 		if !isNotFound(&APIError{Code: code}) {
 			t.Errorf("isNotFound(%s) = false", code)
 		}
 	}
-	for _, err := range []error{&APIError{Code: "flood_protection"}, errors.New("zone_not_found"), nil} {
+	// A missing prerequisite or account is not a missing object.
+	for _, code := range []string{"email_domain_doesnt_exist", "kas_login_not_found", "filter_doesnt_exist", "software_id_not_found", "flood_protection"} {
+		if isNotFound(&APIError{Code: code}) {
+			t.Errorf("isNotFound(%s) = true", code)
+		}
+	}
+	for _, err := range []error{errors.New("zone_not_found"), nil} {
 		if isNotFound(err) {
 			t.Errorf("isNotFound(%v) = true", err)
 		}
@@ -138,7 +144,7 @@ func TestClientGetOne(t *testing.T) {
 	wantParams(t, rec.last(t, "get_x"), map[string]string{"id": "7"})
 
 	for name, answer := range map[string]string{
-		"not found fault": "!x_not_found",
+		"not found fault": "!ftp_login_not_found",
 		"empty_list":      "!empty_list",
 		"empty array":     "",
 		"scalar":          "TRUE",
@@ -159,9 +165,9 @@ func TestClientUpdateAndRemove(t *testing.T) {
 	ctx := context.Background()
 
 	for answer, want := range map[string]error{
-		"TRUE":           nil,
-		"!nothing_to_do": nil,
-		"!x_not_found":   ErrNotFound,
+		"TRUE":                 nil,
+		"!nothing_to_do":       nil,
+		"!ftp_login_not_found": ErrNotFound,
 	} {
 		c, _ := newFake(t, map[string]string{"update_x": answer})
 		if err := c.update(ctx, "update_x", nil); !errors.Is(err, want) {
@@ -175,8 +181,8 @@ func TestClientUpdateAndRemove(t *testing.T) {
 	}
 
 	for answer, want := range map[string]error{
-		"TRUE":         nil,
-		"!x_not_found": ErrNotFound,
+		"TRUE":                 nil,
+		"!ftp_login_not_found": ErrNotFound,
 	} {
 		c, _ := newFake(t, map[string]string{"delete_x": answer})
 		if err := c.remove(ctx, "delete_x", nil); !errors.Is(err, want) {

@@ -139,9 +139,11 @@ func TestDirectoryProtection_Delete(t *testing.T) {
 	if err := c.DirectoryProtection.Delete(ctx, "", "alice"); err == nil {
 		t.Error("Delete without path must fail")
 	}
+	// KAS documents no not-found fault for directory protections, so an
+	// unknown code is returned as it is rather than guessed to be one.
 	c, _ = newFake(t, map[string]string{"delete_directoryprotection": "!directory_not_found"})
-	if err := c.DirectoryProtection.Delete(ctx, "/admin/", "alice"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("expected ErrNotFound, got %v", err)
+	if err := c.DirectoryProtection.Delete(ctx, "/admin/", "alice"); err == nil || errors.Is(err, ErrNotFound) {
+		t.Errorf("an undocumented fault must surface, got %v", err)
 	}
 	c, _ = newFake(t, map[string]string{"delete_directoryprotection": "!in_progress"})
 	if err := c.DirectoryProtection.Delete(ctx, "/admin/", "alice"); err == nil ||

@@ -156,14 +156,31 @@ func TestOutputHelpers(t *testing.T) {
 
 func TestCLI_ExecOutputAndErrors(t *testing.T) {
 	setupCLI(t, func(action string, params map[string]any) (string, string) {
-		if action == "fail" {
+		switch action {
+		case "fail":
 			return "", "zone_not_found"
+		case "get_ftpusers":
+			return "<item>" + kasapitest.MapItem("ftp_login", "f1") + kasapitest.MapItem("ftp_password", "PLAINTEXT") +
+				kasapitest.MapItem("show_password", "Y") + kasapitest.MapItem("ssl_certificate_sni_key", "KEY-MATERIAL") + "</item>", ""
 		}
 		return kasapitest.MapItem("zone", params["zone_host"].(string)) + kasapitest.MapItem("n", params["n"].(string)), ""
 	})
 	out := capture(t, "exec", "get_x", "zone_host=example.com.", "n=a=b")
 	if !strings.Contains(out, `"zone": "example.com."`) || !strings.Contains(out, `"n": "a=b"`) {
 		t.Fatalf("exec output: a value may contain '=':\n%s", out)
+	}
+
+	// Secrets KAS returns are redacted unless --raw asks for them.
+	out = capture(t, "exec", "get_ftpusers")
+	if strings.Contains(out, "PLAINTEXT") || strings.Contains(out, "KEY-MATERIAL") || !strings.Contains(out, `"ftp_password": "REDACTED"`) {
+		t.Fatalf("exec must redact secrets:\n%s", out)
+	}
+	if !strings.Contains(out, `"show_password": "Y"`) || !strings.Contains(out, `"ftp_login": "f1"`) {
+		t.Fatalf("exec must keep the other fields:\n%s", out)
+	}
+	out = capture(t, "exec", "get_ftpusers", "--raw")
+	if !strings.Contains(out, "PLAINTEXT") || !strings.Contains(out, "KEY-MATERIAL") {
+		t.Fatalf("exec --raw must print the secrets:\n%s", out)
 	}
 	wantErr(t, "zone_not_found", "exec", "fail")
 	wantErr(t, "expected key=value", "exec", "get_x", "=value")

@@ -1,6 +1,6 @@
 # kasapi
 
-[![CI](https://github.com/johnnycube/kasapi/actions/workflows/ci.yml/badge.svg)](https://github.com/johnnycube/kasapi/actions/workflows/ci.yml)
+[![check](https://github.com/johnnycube/kasapi/actions/workflows/check.yml/badge.svg)](https://github.com/johnnycube/kasapi/actions/workflows/check.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/johnnycube/kasapi.svg)](https://pkg.go.dev/github.com/johnnycube/kasapi)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
@@ -30,7 +30,9 @@ The client is one layer over the raw API, with typed services on top:
 - **Transport.** SOAP envelope construction, the `KasAuth` session handshake
   (SHA1 by default, plain optional), transparent re-authentication when a
   session expires, and the generic decoder that turns KAS's SOAP-encoded PHP
-  structures into `map[string]any` / `[]any`.
+  structures into `map[string]any` / `[]any`. SHA1 is what the KAS protocol
+  mandates, not a security property: the digest is as good as the password,
+  and TLS carries the security.
 - **Two-factor authentication.** `Config.OTP` is a callback that supplies the
   one-time PIN. It runs on every handshake — a session that expires needs a
   fresh PIN, so a static value would not survive re-authentication.
@@ -78,10 +80,23 @@ Three conventions hold across the services:
 KAS has no standalone mail-alias objects: sender aliases are a mailbox
 property, receiving aliases are forwards.
 
-TLS 1.2 is the floor on the default HTTP client, responses are size-limited,
-and the client is safe for concurrent use — calls serialize because the API
-requires it. `Client.Logout` ends the session with `delete_session`; the next
-call logs in again.
+TLS 1.2 is the floor on the default HTTP client, which also refuses
+redirects, so credentials never go to another host, and takes the proxy
+settings of the environment. Endpoints must be https; the loopback interface
+is the exception, for fakes such as `kasapitest`. Responses are size-limited
+and parsed strictly. The client is safe for concurrent use — calls serialize
+because the API requires it, and a call waiting for its turn stops when its
+context ends. `Client.Logout` ends the session with `delete_session`; the
+next call logs in again.
+
+Errors follow one rule: a KAS fault is an `*APIError` carrying its code, a
+missing object is `ErrNotFound`, and errors kasapi creates start with
+`kasapi:`. Service methods wrap them with the operation, e.g.
+`listing domains: kasapi: zone_not_found`. `ErrNotFound` comes from the fault
+codes that name the addressed object (`record_id_not_found`,
+`ftp_login_not_found`, …); a fault about a missing prerequisite such as
+`email_domain_doesnt_exist` or `kas_login_not_found` stays an `*APIError`, so
+a consumer that drops state on `ErrNotFound` is never misled.
 
 ## Objects
 
@@ -92,8 +107,8 @@ ignored on writes.
 ### Domain and Subdomain
 
 `Domains` (`List`, `Get`, `Update`) and `Subdomains` (`List`, `Get`, `Create`,
-`CreateWithSettings`, `Update`, `UpdatePath`, `Delete`). kascli: `domains`
-(`do`), `subdomains` (`sub`).
+`Update`, `UpdatePath`, `Delete`). kascli: `domains` (`do`), `subdomains`
+(`sub`).
 
 - **`Name` / `FQDN`** — the host name, which is also the identifier.
 - **`Path`** — document root relative to the account root, or the redirect
@@ -222,9 +237,10 @@ kascli: `databases` (`db`).
   protocol. A KAS cronjob requests a URL; it does not run a command.
 - **`Minute`**, **`Hour`**, **`DayOfMonth`**, **`Month`**, **`DayOfWeek`** —
   the schedule: a number, `*`, or a step such as `*/15`. Empty is sent as `*`.
-- **`HTTPUser`**, **`HTTPPassword`** — HTTP basic auth. The password is
-  write-only, and `Update` sends the pair only when both are set, so a job
-  read with `Get` keeps its stored password when written back.
+- **`HTTPUser`** — the HTTP basic auth user. Its password is an argument of
+  `Create` and `Update`, never part of the object. `Update` sends the pair
+  only when the password is given, so a job read with `Get` keeps its stored
+  password when written back.
 - **`MailAddress`** — receives the output of each run.
 - **`MailCondition`** — no mail when the output contains this word.
 - **`MailSubject`** — `default` or `comment`.
@@ -311,9 +327,9 @@ reseller account; `get_accounts` lists those of the logged-in account.
 - **`Login`** — e.g. `w0123456`; the identifier.
 - **`Comment`**, **`ContactMail`**.
 - **`Limits`** — a map from `AccountLimit` (`LimitDomains`, `LimitWebspace`
-  in MB, …) to the allowed count. `get_accounts` names two limits differently
-  from the requests (`max_mail_list`, `max_databases`); the map uses the
-  request names.
+  in MB, …; `AccountLimits()` lists them) to the allowed count.
+  `get_accounts` names two limits differently from the requests
+  (`max_mail_list`, `max_databases`); the map uses the request names.
 - **`DirectoryProtection`**, **`SoftwareInstall`**, **`DNSSettings`**,
   **`KASAccessForbidden`**, **`SSHAccess`** — what the account may do.
 - **`Logging`** (`LogFull`, `LogShort`, `LogNoIP`, `LogNone`), **`LogAge`**
@@ -337,7 +353,7 @@ only a main account may call it.
   plus `Superuser`, `Server`, `SSHKeys` and `SSHHostKeys`, the fingerprints of
   the server's SSH host keys. `UpdateSettings` takes the `AccountOptions`
   part of `AccountChange`. `UpdateOwnPassword` changes the KAS password; the
-  client keeps using `Config.Password`, so create a new `Client` afterwards.
+  client logs in with the new one from then on.
 - **`AccountResource`** — per `AccountLimit`: `Max`, `Used`, `Created`,
   `Reserved`, `Free` and `Exceeded`. `Max` and `Free` are `-1` when
   unlimited.
@@ -393,7 +409,7 @@ if err != nil {
 records, err := client.DNS.List(ctx, "example.com")
 
 // A redirecting subdomain on a chosen PHP version.
-err = client.Subdomains.CreateWithSettings(ctx, "go", "example.com", kasapi.HostSettings{
+err = client.Subdomains.Create(ctx, "go", "example.com", kasapi.HostSettings{
     Path:           "https://example.org",
     RedirectStatus: new(301),
     PHPVersion:     "8.4",
@@ -492,7 +508,8 @@ without a prompt. Storing a password in the config file is
 optional and warned about — the environment variable or the prompt avoid it.
 
 The raw `exec` verb doubles as the way to confirm KAS field names against a
-real account. Request parameters follow the
+real account. It redacts the passwords and the TLS private key KAS returns in
+`get_*` responses; `--raw` prints them. Request parameters follow the
 [KAS API documentation](https://kasapi.kasserver.com/dokumentation/phpdoc/);
 response fields follow recorded KAS responses. Neither is checked against a
 live account yet, so the verification notes in the source stay. The same
@@ -514,12 +531,14 @@ make cover                 # coverage, fails below 95%
 make check                 # everything CI runs (make tools installs the linters)
 ```
 
-The suite covers the SOAP decoder, the auth handshake with and without a
-one-time PIN, session reuse and re-authentication, flood backoff, every
-method of every service with its request parameters and fault handling, and
-every `kascli` command. `kasapitest` provides an in-process fake KAS server
-for use in downstream tests without credentials; set `Server.OTP` to make it
-require a one-time PIN.
+The suite covers the SOAP decoder (a fuzz test included), the auth handshake
+with and without a one-time PIN, session reuse and re-authentication, flood
+backoff, every method of every service with its request parameters and fault
+handling, and every `kascli` command. `kasapitest` provides an in-process
+fake KAS server for use in downstream tests without credentials; it answers
+in the layout of a real response, request echo included. Set `Server.OTP` to
+make it require a one-time PIN and `Server.FloodDelay` to change the delay
+it reports.
 
 ## Extending
 
@@ -559,6 +578,14 @@ rather than describe an object the API can read back:
   `delete_session`.
 
 All of them run through `Client.Exec` and `kascli exec`.
+
+## Compatibility
+
+Releases follow semantic versioning. The promise covers the exported API of
+`kasapi` and `kasapitest`; `internal/` and the `kascli` command line are
+outside it. The library builds with the two most recent Go releases; the
+`go` directive in `go.mod` names the older one, which is the minimum for
+modules that import it.
 
 ## License
 
