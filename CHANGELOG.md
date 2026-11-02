@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.4.0 — 2026-11-02
 
 Typed services for the remaining KAS objects the API can read back. Request
 parameters follow the KAS docs; response fields follow recorded KAS responses
@@ -27,6 +27,8 @@ and are not yet verified from this repository.
   `spaceusage` and `traffic`. `get` takes `--subaccounts`, `--year` and
   `--month`. `delete` on a resource without a delete verb now fails instead of
   doing nothing.
+- Tooling: the release workflow builds with goreleaser 2.19.0; CI uses
+  golangci-lint 2.15.0 and fleetlint 0.9.0.
 
 ## v0.3.4 — 2026-10-21
 
