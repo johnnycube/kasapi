@@ -84,6 +84,12 @@ type Client struct {
 	Databases  *DatabaseService
 	Cronjobs   *CronjobService
 	DDNS       *DDNSService
+
+	MailingLists        *MailingListService
+	DirectoryProtection *DirectoryProtectionService
+	Samba               *SambaService
+	Accounts            *AccountService
+	Statistics          *StatisticsService
 }
 
 // New creates a configured Client.
@@ -135,6 +141,11 @@ func New(cfg Config) (*Client, error) {
 	c.Databases = &DatabaseService{c: c}
 	c.Cronjobs = &CronjobService{c: c}
 	c.DDNS = &DDNSService{c: c}
+	c.MailingLists = &MailingListService{c: c}
+	c.DirectoryProtection = &DirectoryProtectionService{c: c}
+	c.Samba = &SambaService{c: c}
+	c.Accounts = &AccountService{c: c}
+	c.Statistics = &StatisticsService{c: c}
 	return c, nil
 }
 

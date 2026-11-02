@@ -6,8 +6,10 @@
 
 A Go client for the all-inkl.com KAS hosting API. The KAS panel is exposed as
 a SOAP service; this package wraps it in typed methods for the resources worth
-automating — DNS records, mailboxes, forwards, domains and subdomains, TLS
-certificates, FTP users, databases, cronjobs, dynamic DNS — over a transport
+automating — DNS records, mailboxes, forwards, mailing lists, domains and
+subdomains, TLS certificates, FTP and network drive users, directory
+protection, databases, cronjobs, dynamic DNS, subaccounts and the account's
+statistics — over a transport
 that handles the session handshake, the flood-protection delays and the
 PHP-shaped responses on its own.
 
@@ -53,6 +55,11 @@ The client is one layer over the raw API, with typed services on top:
 | `Databases`  | MySQL databases | `get/add/update/delete_database` |
 | `Cronjobs`   | scheduled URL requests | `get/add/update/delete_cronjob` |
 | `DDNS`       | dynamic DNS users | `get/add/update/delete_ddnsuser` |
+| `MailingLists` | Majordomo mailing lists | `get_mailinglists`, `add/update/delete_mailinglist` |
+| `DirectoryProtection` | HTTP basic auth on a directory | `get/add/update/delete_directoryprotection` |
+| `Samba`      | network drive users | `get_sambausers`, `add/update/delete_sambauser` |
+| `Accounts`   | subaccounts, the own account's settings and resources, SSH access, server information | `get_accounts`, `add/update/delete_account`, `get/update_accountsettings`, `get_accountresources`, `update_superusersettings`, `get_server_information` |
+| `Statistics` | storage and traffic, read-only | `get_space`, `get_space_usage`, `get_traffic` |
 
 Three conventions hold across the services:
 
@@ -63,16 +70,18 @@ Three conventions hold across the services:
 - **Updates are idempotent.** KAS answers an update that changes nothing with
   the fault `nothing_to_do`. The desired state is reached, so update methods
   return success.
-- **Secrets are write-only.** KAS returns mailbox, FTP, database and DDNS
-  passwords and the TLS private key in its `get_*` responses. The services
-  deliberately do not map them.
+- **Secrets are write-only.** KAS returns mailbox, FTP, database, DDNS,
+  mailing list, directory, network drive and account passwords and the TLS
+  private key in its `get_*` responses. The services deliberately do not map
+  them.
 
 KAS has no standalone mail-alias objects: sender aliases are a mailbox
 property, receiving aliases are forwards.
 
 TLS 1.2 is the floor on the default HTTP client, responses are size-limited,
 and the client is safe for concurrent use — calls serialize because the API
-requires it.
+requires it. `Client.Logout` ends the session with `delete_session`; the next
+call logs in again.
 
 ## Objects
 
@@ -246,6 +255,111 @@ kascli: `databases` (`db`).
 - **`Changeable`**, **`Deletable`** — *read-only*. System records such as the
   default NS entries are neither.
 
+### MailingList
+
+`MailingLists` (`List`, `Get`, `Create`, `Update`, `Delete`). kascli:
+`mailinglists` (`ml`).
+
+- **`Name`** — KAS-assigned from the address, e.g. `announce-example-com` for
+  `announce@example.com`; the identifier. `Create` returns it.
+- **`Domain`** — the domain of the address, fixed at creation.
+- **`Active`** — whether the list accepts mail.
+- **`InProgress`** — *read-only*.
+- **`Subscribers`**, **`RestrictPost`**, **`Config`** — the subscriber
+  addresses, the addresses allowed to post (empty: anyone) and the complete
+  Majordomo configuration file. Only `Get` reports them; `List` leaves them
+  empty.
+
+`Update` takes a `MailingListUpdate` whose fields are pointers, so that an
+unset list stays as it is and an empty list removes all entries. KAS takes
+both address lists newline-separated, so an address with a line break is
+rejected.
+
+### DirectoryProtection
+
+`DirectoryProtection` (`List`, `Get`, `Create`, `Update`, `Delete`). kascli:
+`directoryprotections` (`dp`), identified as `<path>:<user>`.
+
+- **`Path`**, **`User`** — the protected directory and the login; together the
+  identifier. A user name cannot contain a colon — htpasswd separates user and
+  password with one.
+- **`AuthName`** — the realm the login prompt shows; the KAS docs call it the
+  comment. KAS requires it.
+- **`InProgress`** — *read-only*.
+
+`Update` sends realm and password together: the KAS docs list the password
+as required on update, and it cannot be read back.
+
+### SambaUser
+
+`Samba` (`List`, `Get`, `Create`, `Update`, `UpdatePassword`, `Delete`).
+kascli: `sambausers` (`smb`).
+
+- **`Login`** — KAS-assigned, e.g. `s0123456`; the identifier.
+- **`Path`** — the directory the network drive exposes.
+- **`Comment`** — free text. KAS requires one.
+- **`InProgress`** — *read-only*.
+
+### Subaccount and AccountChange
+
+`Accounts` (`List`, `Get`, `Create`, `Update`, `UpdatePassword`, `UpdateSSH`,
+`Delete`). kascli: `accounts` (`acc`). Subaccounts exist below a main or
+reseller account; `get_accounts` lists those of the logged-in account.
+
+`Subaccount` is what KAS reports:
+
+- **`Login`** — e.g. `w0123456`; the identifier.
+- **`Comment`**, **`ContactMail`**.
+- **`Limits`** — a map from `AccountLimit` (`LimitDomains`, `LimitWebspace`
+  in MB, …) to the allowed count. `get_accounts` names two limits differently
+  from the requests (`max_mail_list`, `max_databases`); the map uses the
+  request names.
+- **`DirectoryProtection`**, **`SoftwareInstall`**, **`DNSSettings`**,
+  **`KASAccessForbidden`**, **`SSHAccess`** — what the account may do.
+- **`Logging`** (`LogFull`, `LogShort`, `LogNoIP`, `LogNone`), **`LogAge`**
+  in days, **`Statistics`**, **`ShowPassword`**.
+- **`TwoFactor`**, **`InProgress`**.
+
+`AccountChange` creates or changes one. Its fields are pointers, and
+`Limits` sends only the given entries, so an update changes exactly what is
+set — a limit missing from a response is never sent back as 0. `Create`
+also takes an `AccountHost` (`Kind` `"domain"`, `"subdomain"` or `""`, with
+`Label`, `Parent` and `Path`) and the KAS and FTP passwords of the new
+account. `UpdateSSH` turns SSH access on or off and replaces the public keys;
+only a main account may call it.
+
+### AccountSettings, AccountResource and ServerComponent
+
+`Accounts` (`Settings`, `UpdateSettings`, `UpdateOwnPassword`, `Resources`,
+`ServerInfo`). kascli: `accountsettings`, `accountresources`, `serverinfo`.
+
+- **`AccountSettings`** — the logged-in account: the `Subaccount` settings
+  plus `Superuser`, `Server`, `SSHKeys` and `SSHHostKeys`, the fingerprints of
+  the server's SSH host keys. `UpdateSettings` takes the `AccountOptions`
+  part of `AccountChange`. `UpdateOwnPassword` changes the KAS password; the
+  client keeps using `Config.Password`, so create a new `Client` afterwards.
+- **`AccountResource`** — per `AccountLimit`: `Max`, `Used`, `Created`,
+  `Reserved`, `Free` and `Exceeded`. `Max` and `Free` are `-1` when
+  unlimited.
+- **`ServerComponent`** — one entry of the server information: a PHP version
+  with the `FileExtension` that selects it (e.g. `php82`), the database
+  server, or the operating system.
+
+### Statistics
+
+`Statistics` (`Space`, `SpaceUsage`, `Traffic`), read-only. kascli: `space`,
+`spaceusage`, `traffic`.
+
+- **`AccountSpace`** — the storage of an account in kB: `Webspace` in total
+  and its parts `HTDocs`, `Chroot`, `Databases`, `MailAccounts`, against
+  `MaxWebspace`. `Space(ctx, true)` reports the subaccounts instead.
+- **`DirectoryUsage`** — the directories below one directory, in bytes, with
+  the number of entries and whether each has subdirectories.
+- **`Traffic`** — HTTP and FTP bytes and hits of a month. `Day` is `0` for the
+  month total and set for the daily entries.
+
+`Calculated` is when KAS last measured; storage figures lag behind by that.
+
 ## TLS and Let's Encrypt
 
 `TLS.Update` installs a certificate you bring and sets the HTTPS redirect and
@@ -291,7 +405,7 @@ login, err := client.FTP.Create(ctx, kasapi.FTPUser{
 }, password)
 
 // Any action without a typed wrapper:
-ret, err := client.Exec(ctx, "get_mailinglists", map[string]any{})
+ret, err := client.Exec(ctx, "get_softwareinstall", map[string]any{})
 ```
 
 Structs that describe a whole object — `FTPUser`, `Cronjob` — are sent as
@@ -339,20 +453,30 @@ kascli update mailaccount m0123456 --responder on --responder-text "Back on Mond
     --responder-from 2026-12-24 --responder-until 2027-01-04
 kascli update tls example.com --cert fullchain.pem --key privkey.pem --force-https
 kascli update cronjob 325208 --active=false
+kascli create mailinglist --address announce@example.com
+kascli update mailinglist announce-example-com --subscriber a@example.org,b@example.org
+kascli create directoryprotection --path /example.com/admin/ --user alice --auth-name Admin
+kascli update account w0123456 --limit subdomain=10,webspace=8192 --ssh-access
+kascli get accountresources -o wide
+kascli get traffic --year 2026 --month 10
+kascli get spaceusage /example.com/
 
 # raw escape hatch for any KAS action
-kascli exec get_mailinglists
+kascli exec get_softwareinstall
 kascli exec add_dns_settings zone_host=example.com. record_type=TXT \
     record_name=_test record_data=hello record_aux=0
 ```
 
-Resource short names: `dns`, `do`, `sub`, `ma`, `mf`, `mfi`, `ftp`, `db`,
-`cj`, `ddns`. Output formats: `table` (default), `wide`, `json`, `yaml`,
+Resource short names: `dns`, `do`, `sub`, `ma`, `mf`, `mfi`, `ml`, `ftp`,
+`smb`, `dp`, `db`, `cj`, `ddns`, `acc`. `get` takes a name for `tls` (the
+host), `mailinglists` (one list with its subscribers) and `spaceusage` (the
+directory). Output formats: `table` (default), `wide`, `json`, `yaml`,
 `name`; `--no-headers` for scripting.
 
 Passwords are never flag values — they would land in the shell history and
 the process list. Commands that set one ask for it at the terminal, or read
-it from stdin with `--password-stdin`.
+it from stdin with `--password-stdin`. `create account` needs two — the KAS
+password, then the FTP password, one line each.
 
 `kascli update tls` installs a certificate from PEM files. It has no flag
 that orders a Let's Encrypt certificate, because the API has none — see
@@ -403,27 +527,38 @@ A new resource type is one file. Add a typed service over `Client.Exec`
 mirroring the existing ones:
 
 ```go
-type MailingListService struct{ c *Client }
+type SymlinkService struct{ c *Client }
 
-func (s *MailingListService) Create(ctx context.Context, name, domain, password string) error {
-    _, err := s.c.Exec(ctx, "add_mailinglist", map[string]any{
-        "mailinglist_name":     name,
-        "mailinglist_domain":   domain,
-        "mailinglist_password": password,
+func (s *SymlinkService) Create(ctx context.Context, name, target string) error {
+    _, err := s.c.Exec(ctx, "add_symlink", map[string]any{
+        "symlink_name":   name,
+        "symlink_target": target,
     })
     return err
 }
 ```
 
-Register it in `New()` (`c.MailingLists = &MailingListService{c: c}`) and add
-tests against `kasapitest`. The helpers in `params.go` cover the recurring
+Register it in `New()` (`c.Symlinks = &SymlinkService{c: c}`) and add tests
+against `kasapitest`. The helpers in `params.go` cover the recurring
 parts: `list` and `getOne` for `get_*` actions, `update` and `remove` for the
 fault codes that mean "unchanged" or "absent".
 
-KAS actions without a typed service: mailing lists (`*_mailinglist`),
-directory protection (`*_directoryprotection`), network drive users
-(`*_sambauser`), software installs, symlinks, the statistics (`get_space`,
-`get_traffic`) and the account actions for resellers.
+KAS actions without a typed service are those that start an operation
+rather than describe an object the API can read back:
+
+- **`add_symlink`** — creates a symlink; KAS has no action to list or delete
+  one.
+- **`get_softwareinstall`**, **`add_softwareinstall`** — the installer
+  catalog and a one-time installation.
+- **`update_chown`** — sets the owner of a path once.
+- **`reset_dns_settings`** — resets a zone to the KAS defaults.
+- **`move_domain`**, **`move_subdomain`** — move a host between accounts.
+- **`add_domain`**, **`delete_domain`**, **`get_topleveldomains`** —
+  adding a domain can order one, so domain lifecycle stays in the panel.
+- **`add_session`** — `KasAuth` creates the session; `Client.Logout` uses
+  `delete_session`.
+
+All of them run through `Client.Exec` and `kascli exec`.
 
 ## License
 

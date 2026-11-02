@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+Typed services for the remaining KAS objects the API can read back. Request
+parameters follow the KAS docs; response fields follow recorded KAS responses
+and are not yet verified from this repository.
+
+- `MailingLists` — `get_mailinglists`, `add/update/delete_mailinglist`.
+  `Get` reports subscribers, post restriction and the Majordomo
+  configuration; `Update` takes pointer fields so an unset list stays as it is.
+- `DirectoryProtection` — `get/add/update/delete_directoryprotection`,
+  identified by path and user. `Update` sends the password with the realm,
+  as the docs require it.
+- `Samba` — network drive users, `get_sambausers`,
+  `add/update/delete_sambauser`. `add_sambauser` sends `samba_password`, as
+  the recorded KAS response shows, not the documented `samba_new_password`.
+- `Accounts` — subaccounts (`get_accounts`, `add/update/delete_account`),
+  the logged-in account's settings (`get/update_accountsettings`), its
+  resources (`get_accountresources`), SSH access and keys
+  (`update_superusersettings`) and the server information
+  (`get_server_information`).
+- `Statistics` — `get_space`, `get_space_usage`, `get_traffic`.
+- `Client.Logout` ends the session with `delete_session`.
+- kascli: resources `mailinglists`, `directoryprotections`, `sambausers`,
+  `accounts`, `accountsettings`, `accountresources`, `serverinfo`, `space`,
+  `spaceusage` and `traffic`. `get` takes `--subaccounts`, `--year` and
+  `--month`. `delete` on a resource without a delete verb now fails instead of
+  doing nothing.
+
 ## v0.3.4 — 2026-10-21
 
 Build only. `go.mod` sets `toolchain go1.27.3`, so CI and the release build
