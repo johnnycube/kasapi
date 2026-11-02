@@ -90,3 +90,24 @@ func isSessionError(code string) bool {
 	}
 	return false
 }
+
+// Logout ends the open KAS session (delete_session). The next call logs in
+// again. Without an open session it does nothing.
+func (c *Client) Logout(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.token == "" || !time.Now().Before(c.tokenExp) {
+		c.token = ""
+		return nil
+	}
+	_, err := c.execLocked(ctx, "delete_session", nil)
+	c.token = ""
+	var apiErr *APIError
+	if err != nil && errors.As(err, &apiErr) && (isSessionError(apiErr.Code) || apiErr.Code == "unknown_session") {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("kasapi: logging out: %w", err)
+	}
+	return nil
+}

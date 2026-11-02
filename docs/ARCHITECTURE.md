@@ -13,7 +13,8 @@ under [Design](../README.md#design).
   (`client.go`), shared helpers for parameters and fault codes (`params.go`,
   `convert.go`) and one typed service per resource (`dns.go`, `mail.go`,
   `subdomain.go`, `domain.go`, `host.go`, `tls.go`, `ftp.go`, `database.go`,
-  `cronjob.go`, `ddns.go`).
+  `cronjob.go`, `ddns.go`, `mailinglist.go`, `directoryprotection.go`,
+  `samba.go`, `account.go`, `statistics.go`).
 - **`kasapitest`** — an in-process fake KAS server. It speaks the same SOAP
   envelope, checks credentials and the one-time PIN, and hands each action to
   a handler the test supplies. Downstream modules use it to test without an

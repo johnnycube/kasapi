@@ -18,12 +18,19 @@ type listing struct {
 	rows                 []row
 }
 
+// getOptions are the flags of `kascli get`.
+type getOptions struct {
+	zone        string
+	subaccounts bool
+	year, month int
+}
+
 // getRequest carries the client and the command line of one `kascli get`.
 type getRequest struct {
+	getOptions
 	ctx    context.Context
 	client *kasapi.Client
 	args   []string
-	zone   string
 }
 
 // getters fetches each resource type kascli can get.
@@ -39,9 +46,20 @@ var getters = map[string]func(getRequest) (listing, error){
 	"databases":    getDatabases,
 	"cronjobs":     getCronjobs,
 	"ddnsusers":    getDDNSUsers,
+
+	"mailinglists":         getMailingLists,
+	"directoryprotections": getDirectoryProtections,
+	"sambausers":           getSambaUsers,
+	"accounts":             getAccounts,
+	"accountsettings":      getAccountSettings,
+	"accountresources":     getAccountResources,
+	"serverinfo":           getServerInfo,
+	"space":                getSpace,
+	"spaceusage":           getSpaceUsage,
+	"traffic":              getTraffic,
 }
 
-func cmdGet(g *globals, args []string, zone string) error {
+func cmdGet(g *globals, args []string, opts getOptions) error {
 	res, err := canonicalResource(args[0])
 	if err != nil {
 		return err
@@ -60,7 +78,7 @@ func cmdGet(g *globals, args []string, zone string) error {
 	if !ok {
 		return nil
 	}
-	l, err := get(getRequest{ctx: ctx, client: client, args: args, zone: zone})
+	l, err := get(getRequest{getOptions: opts, ctx: ctx, client: client, args: args})
 	if err != nil {
 		return err
 	}

@@ -750,6 +750,14 @@ func TestWriteCommandsNeedCredentials(t *testing.T) {
 		{"update", "db", "d1", "--comment", "x"},
 		{"update", "cj", "1", "--comment", "x"},
 		{"update", "ddns", "dyn1", "--comment", "x"},
+		{"create", "ml", "--address", "a@example.com", "--password-stdin"},
+		{"create", "dp", "--path", "/a/", "--user", "u", "--auth-name", "x", "--password-stdin"},
+		{"create", "smb", "--path", "/a/", "--comment", "x", "--password-stdin"},
+		{"update", "ml", "l", "--active"},
+		{"update", "dp", "/a/:u", "--password-stdin"},
+		{"update", "smb", "s1", "--comment", "x"},
+		{"update", "account", "w1", "--comment", "x"},
+		{"update", "accountsettings", "--comment", "x"},
 		{"delete", "dns", "11"},
 		{"exec", "get_domains"},
 	} {
@@ -774,8 +782,8 @@ func TestHelpersOfWriteCommands(t *testing.T) {
 			t.Errorf("splitAddress(%q) must fail", bad)
 		}
 	}
-	if _, err := readPEM("cert", filepath.Join(t.TempDir(), "missing")); err == nil || !strings.Contains(err.Error(), "--cert") {
-		t.Fatalf("readPEM must name the flag, got %v", err)
+	if _, err := readFlagFile("cert", filepath.Join(t.TempDir(), "missing")); err == nil || !strings.Contains(err.Error(), "--cert") {
+		t.Fatalf("readFlagFile must name the flag, got %v", err)
 	}
 
 	defer func() {

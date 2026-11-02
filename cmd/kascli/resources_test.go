@@ -17,6 +17,9 @@ func TestCanonicalResource(t *testing.T) {
 		"do": "domains", "sub": "subdomains", "ma": "mailaccounts", "mf": "mailforwards",
 		"mfi": "mailfilters", "ftp": "ftpusers", "ftpuser": "ftpusers", "db": "databases",
 		"cj": "cronjobs", "cronjob": "cronjobs", "ddns": "ddnsusers", "tls": "tls",
+		"ml": "mailinglists", "dp": "directoryprotections", "smb": "sambausers", "acc": "accounts",
+		"accountsettings": "accountsettings", "accountresource": "accountresources",
+		"serverinfo": "serverinfo", "space": "space", "spaceusage": "spaceusage", "traffic": "traffic",
 	} {
 		got, err := canonicalResource(in)
 		if err != nil || got != want {
@@ -24,7 +27,7 @@ func TestCanonicalResource(t *testing.T) {
 		}
 	}
 	for _, in := range []string{"", "pods", "certificate"} {
-		if _, err := canonicalResource(in); err == nil || !strings.Contains(err.Error(), "available: cronjobs, databases") {
+		if _, err := canonicalResource(in); err == nil || !strings.Contains(err.Error(), "available: accountresources, accounts") {
 			t.Errorf("canonicalResource(%q): %v", in, err)
 		}
 	}

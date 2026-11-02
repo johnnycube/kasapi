@@ -70,8 +70,8 @@ func newSecret(fromStdin bool, label string) (string, error) {
 	return promptSecret(label)
 }
 
-// readPEM reads a PEM file named by a flag.
-func readPEM(flag, path string) (string, error) {
+// readFlagFile reads a file named by a flag.
+func readFlagFile(flag, path string) (string, error) {
 	// G304: the path is the caller's own command-line argument.
 	data, err := os.ReadFile(path) //nolint:gosec
 	if err != nil {
@@ -141,6 +141,10 @@ func newCreateCmd(g *globals) *cobra.Command {
 		createDatabaseCmd(g),
 		createCronjobCmd(g),
 		createDDNSUserCmd(g),
+		createMailingListCmd(g),
+		createDirectoryProtectionCmd(g),
+		createSambaUserCmd(g),
+		createAccountCmd(g),
 	)
 	return cmd
 }
@@ -523,6 +527,11 @@ func newUpdateCmd(g *globals) *cobra.Command {
 		updateDatabaseCmd(g),
 		updateCronjobCmd(g),
 		updateDDNSUserCmd(g),
+		updateMailingListCmd(g),
+		updateDirectoryProtectionCmd(g),
+		updateSambaUserCmd(g),
+		updateAccountCmd(g),
+		updateAccountSettingsCmd(g),
 	)
 	return cmd
 }
@@ -650,7 +659,7 @@ func (tf *tlsFlags) update(cmd *cobra.Command) (kasapi.TLSUpdate, error) {
 		if file.path == "" {
 			continue
 		}
-		pem, err := readPEM(file.flag, file.path)
+		pem, err := readFlagFile(file.flag, file.path)
 		if err != nil {
 			return u, err
 		}

@@ -22,17 +22,27 @@ type resource struct {
 
 // resources lists the supported resource types in api-resources order.
 var resources = []resource{
+	{"accountresources", "accountresource", "", "get"},
+	{"accounts", "account", "acc", "get,create,update,delete"},
+	{"accountsettings", "accountsettings", "", "get,update"},
 	{"cronjobs", "cronjob", "cj", "get,create,update,delete"},
 	{"databases", "database", "db", "get,create,update,delete"},
 	{"ddnsusers", "ddnsuser", "ddns", "get,create,update,delete"},
+	{"directoryprotections", "directoryprotection", "dp", "get,create,update,delete"},
 	{"dnsrecords", "dnsrecord", "dns", "get,create,update,delete"},
 	{"domains", "domain", "do", "get,update"},
 	{"ftpusers", "ftpuser", "ftp", "get,create,update,delete"},
 	{"mailaccounts", "mailaccount", "ma", "get,create,update,delete"},
 	{"mailfilters", "mailfilter", "mfi", "get"},
 	{"mailforwards", "mailforward", "mf", "get,create,update,delete"},
+	{"mailinglists", "mailinglist", "ml", "get,create,update,delete"},
+	{"sambausers", "sambauser", "smb", "get,create,update,delete"},
+	{"serverinfo", "serverinfo", "", "get"},
+	{"space", "space", "", "get"},
+	{"spaceusage", "spaceusage", "", "get"},
 	{"subdomains", "subdomain", "sub", "get,create,update,delete"},
 	{"tls", "tls", "", "get,update"},
+	{"traffic", "traffic", "", "get"},
 }
 
 // aliases returns the names a resource answers to besides its canonical one.
@@ -67,16 +77,20 @@ func canonicalResource(s string) (string, error) {
 }
 
 func newGetCmd(g *globals) *cobra.Command {
-	var zone string
+	var opts getOptions
 	cmd := &cobra.Command{
 		Use:   "get <resource> [name]",
-		Short: "list resources, or show the TLS state of one host (see api-resources)",
+		Short: "list resources; a name selects the host of tls, the list of mailinglists or the directory of spaceusage (see api-resources)",
 		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return cmdGet(g, args, zone)
+			return cmdGet(g, args, opts)
 		},
 	}
-	cmd.Flags().StringVarP(&zone, "zone", "z", "", "DNS zone (required for dnsrecords)")
+	f := cmd.Flags()
+	f.StringVarP(&opts.zone, "zone", "z", "", "DNS zone (required for dnsrecords)")
+	f.BoolVar(&opts.subaccounts, "subaccounts", false, "space: show the subaccounts instead of the account")
+	f.IntVar(&opts.year, "year", 0, "traffic: year (default: current)")
+	f.IntVar(&opts.month, "month", 0, "traffic: month 1-12 (default: current)")
 	return cmd
 }
 
@@ -193,6 +207,21 @@ var deleters = map[string]func(ctx context.Context, c *kasapi.Client, id string)
 	"ddnsusers": func(ctx context.Context, c *kasapi.Client, id string) (string, error) {
 		return "ddnsuser/" + id, c.DDNS.Delete(ctx, id)
 	},
+	"mailinglists": func(ctx context.Context, c *kasapi.Client, id string) (string, error) {
+		return "mailinglist/" + id, c.MailingLists.Delete(ctx, id)
+	},
+	// The id is <path>:<user>.
+	"directoryprotections": func(ctx context.Context, c *kasapi.Client, id string) (string, error) {
+		path, user, err := splitDirectoryID(id)
+		if err != nil {
+			return "", err
+		}
+		return "directoryprotection/" + id, c.DirectoryProtection.Delete(ctx, path, user)
+	},
+	"sambausers": func(ctx context.Context, c *kasapi.Client, id string) (string, error) {
+		return "sambauser/" + id, c.Samba.Delete(ctx, id)
+	},
+	"accounts": deleteAccount,
 	// The id is the mail login.
 	"mailfilters": func(ctx context.Context, c *kasapi.Client, id string) (string, error) {
 		return "mailfilters of mailaccount/" + id, c.Mail.DeleteFilters(ctx, id)
@@ -218,7 +247,7 @@ func cmdDelete(g *globals, args []string) error {
 
 	del, ok := deleters[res]
 	if !ok {
-		return nil
+		return fmt.Errorf("cannot delete %q (see kascli api-resources)", args[0])
 	}
 	name, err := del(ctx, client, args[1])
 	if err != nil {

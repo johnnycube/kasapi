@@ -173,3 +173,57 @@ func TestAuth_WaitsForFloodWindow(t *testing.T) {
 		t.Fatalf("no request may leave inside the flood window, auth calls: %d", got)
 	}
 }
+
+func TestLogout(t *testing.T) {
+	ctx := context.Background()
+	answer := "session-token-1"
+	srv := kasapitest.New(t, func(action string, _ map[string]any) (string, string) {
+		if action == "delete_session" {
+			if code, isFault := strings.CutPrefix(answer, "!"); isFault {
+				return "", code
+			}
+			return answer, ""
+		}
+		return "TRUE", ""
+	})
+	c := newTestClient(t, srv)
+
+	// Without a session there is nothing to end.
+	if err := c.Logout(ctx); err != nil || srv.APICalls.Load() != 0 || srv.AuthCalls.Load() != 0 {
+		t.Fatalf("Logout without session: %v, %d API / %d auth calls", err, srv.APICalls.Load(), srv.AuthCalls.Load())
+	}
+
+	if _, err := c.Exec(ctx, "noop", nil); err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if err := c.Logout(ctx); err != nil || srv.APICalls.Load() != 2 {
+		t.Fatalf("Logout: %v, %d API calls", err, srv.APICalls.Load())
+	}
+	if _, err := c.Exec(ctx, "noop", nil); err != nil || srv.AuthCalls.Load() != 2 {
+		t.Fatalf("the next call must log in again: %v, %d auth calls", err, srv.AuthCalls.Load())
+	}
+
+	// A session KAS no longer knows is ended as well.
+	answer = "!unknown_session"
+	if err := c.Logout(ctx); err != nil {
+		t.Fatalf("unknown_session must be success, got %v", err)
+	}
+
+	answer = "!kas_error"
+	if _, err := c.Exec(ctx, "noop", nil); err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if err := c.Logout(ctx); err == nil || !strings.Contains(err.Error(), "logging out") {
+		t.Fatalf("fault must be returned with context, got %v", err)
+	}
+
+	// An expired session is dropped without a request.
+	if _, err := c.Exec(ctx, "noop", nil); err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	c.tokenExp = time.Now().Add(-time.Second)
+	before := srv.APICalls.Load()
+	if err := c.Logout(ctx); err != nil || srv.APICalls.Load() != before || c.token != "" {
+		t.Fatalf("expired session: %v, token %q", err, c.token)
+	}
+}
