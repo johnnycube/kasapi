@@ -231,6 +231,15 @@ func TestDNS_CreateFallsBackToLookup(t *testing.T) {
 		t.Fatalf("Create: %q %v", id, err)
 	}
 
+	// A structured answer is not an id either.
+	c, _ = newFake(t, map[string]string{
+		"add_dns_settings": kasapitest.MapItem("Msg", "ok"),
+		"get_dns_settings": dnsEntry("2", "www", "A", "203.0.113.1", "0"),
+	})
+	if id, err := c.DNS.Create(ctx, rec); err != nil || id != "2" {
+		t.Fatalf("Create with a map answer: %q %v", id, err)
+	}
+
 	// The record is not in the zone afterwards.
 	c, _ = newFake(t, map[string]string{
 		"add_dns_settings": "TRUE",

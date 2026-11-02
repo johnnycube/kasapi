@@ -16,7 +16,11 @@ func TestAsString(t *testing.T) {
 		{42, "42"},
 		{nil, ""},
 		{true, "true"},
+		{false, "false"},
 		{[]string{"a"}, "[a]"},
+		// Decoded structures are never rendered: they would pass as ids.
+		{map[string]any{"a": "b"}, ""},
+		{[]any{"a"}, ""},
 	} {
 		if got := asString(tc.in); got != tc.want {
 			t.Errorf("asString(%#v) = %q, want %q", tc.in, got, tc.want)

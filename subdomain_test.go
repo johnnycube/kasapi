@@ -52,7 +52,7 @@ func TestSubdomains_ListCreateDelete(t *testing.T) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
 
-	if err := c.Subdomains.Create(ctx, "shop", "example.com", "/shop/"); err != nil {
+	if err := c.Subdomains.Create(ctx, "shop", "example.com", HostSettings{Path: "/shop/"}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if err := c.Subdomains.Delete(ctx, "blog.example.com"); err != nil {
@@ -82,7 +82,7 @@ func TestSubdomains_UpdateAndValidation(t *testing.T) {
 	if err := c.Subdomains.UpdatePath(ctx, "", "/x/"); err == nil {
 		t.Fatal("UpdatePath without fqdn must fail")
 	}
-	if err := c.Subdomains.Create(ctx, "", "example.com", ""); err == nil {
+	if err := c.Subdomains.Create(ctx, "", "example.com", HostSettings{}); err == nil {
 		t.Fatal("Create without name must fail")
 	}
 	if err := c.Subdomains.Delete(ctx, ""); err == nil {
@@ -172,7 +172,7 @@ func TestSubdomains_GetFiltersOnTheServer(t *testing.T) {
 
 func TestSubdomains_CreateSendsNoDefaultSettings(t *testing.T) {
 	c, rec := newFake(t, map[string]string{"add_subdomain": "shop.example.com"})
-	if err := c.Subdomains.Create(context.Background(), "shop", "example.com", ""); err != nil {
+	if err := c.Subdomains.Create(context.Background(), "shop", "example.com", HostSettings{}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	got := rec.last(t, "add_subdomain")
@@ -180,15 +180,15 @@ func TestSubdomains_CreateSendsNoDefaultSettings(t *testing.T) {
 	wantAbsent(t, got, "subdomain_path", "redirect_status", "php_version", "is_active")
 }
 
-func TestSubdomains_CreateWithSettings(t *testing.T) {
+func TestSubdomains_CreateWithHostSettings(t *testing.T) {
 	ctx := context.Background()
 	c, rec := newFake(t, map[string]string{"add_subdomain": "TRUE"})
 
-	err := c.Subdomains.CreateWithSettings(ctx, "go", "example.com", HostSettings{
+	err := c.Subdomains.Create(ctx, "go", "example.com", HostSettings{
 		Path: "https://example.org/landing", RedirectStatus: new(302), PHPVersion: "8.4",
 	})
 	if err != nil {
-		t.Fatalf("CreateWithSettings: %v", err)
+		t.Fatalf("Create: %v", err)
 	}
 	wantParams(t, rec.last(t, "add_subdomain"), map[string]string{
 		"subdomain_name": "go", "domain_name": "example.com",
@@ -205,7 +205,7 @@ func TestSubdomains_CreateWithSettings(t *testing.T) {
 		"active on create": {"go", "example.com", HostSettings{Active: new(false)}},
 		"bad redirect":     {"go", "example.com", HostSettings{Path: "https://x", RedirectStatus: new(303)}},
 	} {
-		if err := c.Subdomains.CreateWithSettings(ctx, tc.sub, tc.domain, tc.hs); err == nil {
+		if err := c.Subdomains.Create(ctx, tc.sub, tc.domain, tc.hs); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
 	}
@@ -214,7 +214,7 @@ func TestSubdomains_CreateWithSettings(t *testing.T) {
 	}
 
 	c, _ = newFake(t, map[string]string{"add_subdomain": "!subdomain_exist_as_subdomain"})
-	err = c.Subdomains.CreateWithSettings(ctx, "go", "example.com", HostSettings{})
+	err = c.Subdomains.Create(ctx, "go", "example.com", HostSettings{})
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || !strings.Contains(err.Error(), "creating subdomain go.example.com") {
 		t.Fatalf("fault must be returned with context, got %v", err)

@@ -105,7 +105,7 @@ func (s *DNSService) Create(ctx context.Context, r DNSRecord) (string, error) {
 		return "", fmt.Errorf("creating DNS record %s %s.%s: %w", r.Type, r.Name, r.Zone, err)
 	}
 
-	if id := asString(ret); id != "" && id != "TRUE" {
+	if id := createdID(ret); id != "" {
 		return id, nil // ReturnInfo carries the new record id
 	}
 
@@ -122,42 +122,30 @@ func (s *DNSService) Create(ctx context.Context, r DNSRecord) (string, error) {
 			return rec.ID, nil
 		}
 	}
-	return "", fmt.Errorf("record created but not found in zone %q afterwards", r.Zone)
+	return "", fmt.Errorf("kasapi: record created but not found in zone %q afterwards", r.Zone)
 }
 
 // Update modifies name, data and aux of a record. The type is immutable in the
 // KAS API; recreate the record to change it.
 func (s *DNSService) Update(ctx context.Context, r DNSRecord) error {
 	if r.ID == "" {
-		return fmt.Errorf("updating DNS record: missing record id")
+		return errors.New("kasapi: DNS record id must not be empty")
 	}
-	_, err := s.c.Exec(ctx, "update_dns_settings", map[string]any{
+	err := s.c.update(ctx, "update_dns_settings", map[string]any{
 		"record_id":   r.ID,
 		"record_name": r.Name,
 		"record_data": r.Data,
 		"record_aux":  r.Aux,
 	})
-	if err != nil && !isNothingToDo(err) {
-		return fmt.Errorf("updating DNS record %s: %w", r.ID, err)
-	}
-	return nil
+	return wrapHostErr("updating DNS record", r.ID, err)
 }
 
 // Delete removes a record by id. Deleting an already absent record returns
 // ErrNotFound.
 func (s *DNSService) Delete(ctx context.Context, id string) error {
 	if id == "" {
-		return fmt.Errorf("deleting DNS record: missing record id")
+		return errors.New("kasapi: DNS record id must not be empty")
 	}
-	_, err := s.c.Exec(ctx, "delete_dns_settings", map[string]any{
-		"record_id": id,
-	})
-	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && strings.Contains(apiErr.Code, "not_found") {
-			return ErrNotFound
-		}
-		return fmt.Errorf("deleting DNS record %s: %w", id, err)
-	}
-	return nil
+	err := s.c.remove(ctx, "delete_dns_settings", map[string]any{"record_id": id})
+	return wrapHostErr("deleting DNS record", id, err)
 }

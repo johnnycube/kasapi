@@ -11,6 +11,8 @@ import (
 // Conversion helpers for the generic values decoded from KAS responses, which
 // may arrive as string, float64 or int depending on the field.
 
+// asString renders a scalar; a map or list is "", so that a structured value
+// is never mistaken for an identifier or printed into an error.
 func asString(v any) string {
 	switch t := v.(type) {
 	case string:
@@ -19,7 +21,9 @@ func asString(v any) string {
 		return strconv.FormatFloat(t, 'f', -1, 64)
 	case int:
 		return strconv.Itoa(t)
-	case nil:
+	case bool:
+		return strconv.FormatBool(t)
+	case nil, map[string]any, []any:
 		return ""
 	default:
 		return fmt.Sprintf("%v", t)

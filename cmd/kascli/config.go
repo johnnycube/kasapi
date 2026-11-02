@@ -44,7 +44,7 @@ func newConfigGetContextsCmd(g *globals) *cobra.Command {
 		Short: "list contexts",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			cfg, err := kasconfig.Load(kasconfig.Path())
+			cfg, _, err := loadConfig()
 			if err != nil {
 				return err
 			}
@@ -84,7 +84,7 @@ func newConfigCurrentContextCmd() *cobra.Command {
 		Short: "show the current context",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := kasconfig.Load(kasconfig.Path())
+			cfg, _, err := loadConfig()
 			if err != nil {
 				return err
 			}
@@ -103,8 +103,7 @@ func newConfigUseContextCmd() *cobra.Command {
 		Short: "set the current context",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path := kasconfig.Path()
-			cfg, err := kasconfig.Load(path)
+			cfg, path, err := loadConfig()
 			if err != nil {
 				return err
 			}
@@ -178,8 +177,7 @@ func newConfigSetContextCmd(_ *globals) *cobra.Command {
 		Short: "create or update a context",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path := kasconfig.Path()
-			cfg, err := kasconfig.Load(path)
+			cfg, path, err := loadConfig()
 			if err != nil {
 				return err
 			}
@@ -224,8 +222,7 @@ func newConfigDeleteContextCmd() *cobra.Command {
 		Short: "remove a context",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path := kasconfig.Path()
-			cfg, err := kasconfig.Load(path)
+			cfg, path, err := loadConfig()
 			if err != nil {
 				return err
 			}
@@ -248,7 +245,7 @@ func newConfigViewCmd(g *globals) *cobra.Command {
 		Short: "show the merged config (passwords redacted)",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			cfg, err := kasconfig.Load(kasconfig.Path())
+			cfg, _, err := loadConfig()
 			if err != nil {
 				return err
 			}

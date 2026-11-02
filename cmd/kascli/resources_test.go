@@ -288,6 +288,16 @@ func TestCLI_GetFaultsAndEmptyLists(t *testing.T) {
 	wantErr(t, "--zone is required", "get", "dns")
 }
 
+func TestCLI_GetWithoutGetterFails(t *testing.T) {
+	// A resource in the table without a getter is a programming error that
+	// must not pass as an empty result.
+	saved := getters["space"]
+	delete(getters, "space")
+	t.Cleanup(func() { getters["space"] = saved })
+	setupFake(t, map[string]string{})
+	wantErr(t, `cannot get "space"`, "get", "space")
+}
+
 func TestCLI_DeleteNewResources(t *testing.T) {
 	rec := setupFake(t, map[string]string{
 		"delete_ftpuser": "TRUE", "delete_database": "TRUE", "delete_cronjob": "TRUE",

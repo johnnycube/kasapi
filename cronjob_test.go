@@ -47,11 +47,9 @@ func TestCronjobs_ListMapsAllFields(t *testing.T) {
 		HTTPUser: "cron", MailAddress: "cronjob@example.com", MailCondition: "no-mail",
 		MailSubject: "comment", Active: true,
 	}
+	// The equality above also proves the HTTP password of the response is not mapped.
 	if jobs[0] != want {
 		t.Fatalf("got %+v, want %+v", jobs[0], want)
-	}
-	if jobs[0].HTTPPassword != "" {
-		t.Fatal("the HTTP password of the response must not be mapped")
 	}
 	if jobs[1].Active {
 		t.Fatalf("second job must be inactive: %+v", jobs[1])
@@ -111,34 +109,38 @@ func TestCronjob_Validate(t *testing.T) {
 		with(func(j *Cronjob) { j.Protocol = "http" }),
 		with(func(j *Cronjob) { j.Protocol = "https"; j.MailSubject = "comment" }),
 		with(func(j *Cronjob) { j.MailSubject = "default"; j.MailAddress = "ops@example.com" }),
-		with(func(j *Cronjob) { j.HTTPUser = "cron"; j.HTTPPassword = "pw" }),
 		// A job read with Get carries the user without the password.
 		with(func(j *Cronjob) { j.HTTPUser = "cron" }),
 	}
 	for _, j := range valid {
-		if err := j.validate(); err != nil {
+		if err := j.validate(""); err != nil {
 			t.Errorf("%+v: %v", j, err)
 		}
 	}
+	if err := with(func(j *Cronjob) { j.HTTPUser = "cron" }).validate("pw"); err != nil {
+		t.Errorf("user with password: %v", err)
+	}
 	invalid := map[string]Cronjob{
-		"no URL":                with(func(j *Cronjob) { j.URL = " " }),
-		"URL with protocol":     with(func(j *Cronjob) { j.URL = "https://example.com/cron.php" }),
-		"no comment":            with(func(j *Cronjob) { j.Comment = "" }),
-		"bad protocol":          with(func(j *Cronjob) { j.Protocol = "ftp" }),
-		"bad mail subject":      with(func(j *Cronjob) { j.MailSubject = "custom" }),
-		"bad mail address":      with(func(j *Cronjob) { j.MailAddress = "nobody" }),
-		"password without user": with(func(j *Cronjob) { j.HTTPPassword = "pw" }),
+		"no URL":            with(func(j *Cronjob) { j.URL = " " }),
+		"URL with protocol": with(func(j *Cronjob) { j.URL = "https://example.com/cron.php" }),
+		"no comment":        with(func(j *Cronjob) { j.Comment = "" }),
+		"bad protocol":      with(func(j *Cronjob) { j.Protocol = "ftp" }),
+		"bad mail subject":  with(func(j *Cronjob) { j.MailSubject = "custom" }),
+		"bad mail address":  with(func(j *Cronjob) { j.MailAddress = "nobody" }),
 	}
 	for name, j := range invalid {
-		if err := j.validate(); err == nil {
+		if err := j.validate(""); err == nil {
 			t.Errorf("%s: expected an error", name)
 		}
+	}
+	if err := base.validate("pw"); err == nil {
+		t.Error("password without user: expected an error")
 	}
 }
 
 func TestCronjob_Params(t *testing.T) {
 	// An empty job spells out every default.
-	got := Cronjob{URL: "example.com/cron.php", Comment: "job"}.params()
+	got := Cronjob{URL: "example.com/cron.php", Comment: "job"}.params("")
 	want := map[string]any{
 		"protocol": "https", "http_url": "example.com/cron.php", "cronjob_comment": "job",
 		"minute": "*", "hour": "*", "day_of_month": "*", "month": "*", "day_of_week": "*",
@@ -151,9 +153,9 @@ func TestCronjob_Params(t *testing.T) {
 	got = Cronjob{
 		URL: "example.com/cron.php", Comment: "job", Protocol: "http",
 		Minute: "*/15", Hour: "3", DayOfMonth: "1", Month: "6", DayOfWeek: "0",
-		HTTPUser: "cron", HTTPPassword: "pw",
+		HTTPUser:    "cron",
 		MailAddress: "ops@example.com", MailCondition: "OK", MailSubject: "comment", Active: true,
-	}.params()
+	}.params("pw")
 	want = map[string]any{
 		"protocol": "http", "http_url": "example.com/cron.php", "cronjob_comment": "job",
 		"minute": "*/15", "hour": "3", "day_of_month": "1", "month": "6", "day_of_week": "0",
@@ -166,7 +168,7 @@ func TestCronjob_Params(t *testing.T) {
 	}
 
 	// The user alone is not sent: it would clear the stored password.
-	got = Cronjob{URL: "x", Comment: "job", HTTPUser: "cron"}.params()
+	got = Cronjob{URL: "x", Comment: "job", HTTPUser: "cron"}.params("")
 	if _, ok := got["http_user"]; ok {
 		t.Fatalf("http_user without password must not be sent: %#v", got)
 	}
@@ -180,7 +182,7 @@ func TestCronjobs_Create(t *testing.T) {
 	ctx := context.Background()
 	c, rec := newFake(t, map[string]string{"add_cronjob": "324700"})
 
-	id, err := c.Cronjobs.Create(ctx, Cronjob{URL: "example.com/cron.php", Comment: "job", Minute: "9", Hour: "8", Active: true})
+	id, err := c.Cronjobs.Create(ctx, Cronjob{URL: "example.com/cron.php", Comment: "job", Minute: "9", Hour: "8", Active: true}, "")
 	if err != nil || id != "324700" {
 		t.Fatalf("Create: %q %v", id, err)
 	}
@@ -191,23 +193,32 @@ func TestCronjobs_Create(t *testing.T) {
 	})
 	wantAbsent(t, got, "cronjob_id", "http_user", "http_password", "mail_address")
 
+	// Basic auth is sent as a pair.
+	if _, err := c.Cronjobs.Create(ctx, Cronjob{URL: "x", Comment: "job", HTTPUser: "cron"}, "pw"); err != nil {
+		t.Fatalf("Create with basic auth: %v", err)
+	}
+	wantParams(t, rec.last(t, "add_cronjob"), map[string]string{"http_user": "cron", "http_password": "pw"})
+
 	before := rec.count("add_cronjob")
-	if _, err := c.Cronjobs.Create(ctx, Cronjob{Comment: "job"}); err == nil {
+	if _, err := c.Cronjobs.Create(ctx, Cronjob{Comment: "job"}, ""); err == nil {
 		t.Error("Create without URL must fail")
 	}
-	if _, err := c.Cronjobs.Create(ctx, Cronjob{URL: "x", Comment: "job", HTTPUser: "cron"}); err == nil {
+	if _, err := c.Cronjobs.Create(ctx, Cronjob{URL: "x", Comment: "job", HTTPUser: "cron"}, ""); err == nil {
 		t.Error("Create with an HTTP user but no password must fail")
+	}
+	if _, err := c.Cronjobs.Create(ctx, Cronjob{URL: "x", Comment: "job"}, "pw"); err == nil {
+		t.Error("Create with an HTTP password but no user must fail")
 	}
 	if rec.count("add_cronjob") != before {
 		t.Fatal("invalid input must not reach the API")
 	}
 
 	c, _ = newFake(t, map[string]string{"add_cronjob": "TRUE"})
-	if _, err := c.Cronjobs.Create(ctx, Cronjob{URL: "x", Comment: "job"}); err == nil || !strings.Contains(err.Error(), "returned no id") {
+	if _, err := c.Cronjobs.Create(ctx, Cronjob{URL: "x", Comment: "job"}, ""); err == nil || !strings.Contains(err.Error(), "returned no id") {
 		t.Fatalf("a create without id must fail, got %v", err)
 	}
 	c, _ = newFake(t, map[string]string{"add_cronjob": "!time_not_allowed"})
-	if _, err := c.Cronjobs.Create(ctx, Cronjob{URL: "x", Comment: "job"}); err == nil ||
+	if _, err := c.Cronjobs.Create(ctx, Cronjob{URL: "x", Comment: "job"}, ""); err == nil ||
 		!strings.Contains(err.Error(), `creating cronjob "job"`) {
 		t.Fatalf("fault must be returned with context, got %v", err)
 	}
@@ -223,7 +234,7 @@ func TestCronjobs_UpdateRoundTrip(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 	job.Active = false
-	if err := c.Cronjobs.Update(ctx, *job); err != nil {
+	if err := c.Cronjobs.Update(ctx, *job, ""); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	got := rec.last(t, "update_cronjob")
@@ -234,17 +245,16 @@ func TestCronjobs_UpdateRoundTrip(t *testing.T) {
 	wantAbsent(t, got, "http_user", "http_password")
 
 	// New credentials are sent together.
-	job.HTTPPassword = "n3w"
-	if err := c.Cronjobs.Update(ctx, *job); err != nil {
+	if err := c.Cronjobs.Update(ctx, *job, "n3w"); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	wantParams(t, rec.last(t, "update_cronjob"), map[string]string{"http_user": "cron", "http_password": "n3w"})
 
 	before := rec.count("update_cronjob")
-	if err := c.Cronjobs.Update(ctx, Cronjob{URL: "x", Comment: "job"}); err == nil {
+	if err := c.Cronjobs.Update(ctx, Cronjob{URL: "x", Comment: "job"}, ""); err == nil {
 		t.Error("Update without id must fail")
 	}
-	if err := c.Cronjobs.Update(ctx, Cronjob{ID: "1", Comment: "job"}); err == nil {
+	if err := c.Cronjobs.Update(ctx, Cronjob{ID: "1", Comment: "job"}, ""); err == nil {
 		t.Error("Update without URL must fail")
 	}
 	if rec.count("update_cronjob") != before {
@@ -257,7 +267,7 @@ func TestCronjobs_UpdateAndDeleteFaults(t *testing.T) {
 	job := Cronjob{ID: "325208", URL: "x", Comment: "job"}
 
 	c, rec := newFake(t, map[string]string{"update_cronjob": "!nothing_to_do", "delete_cronjob": "TRUE"})
-	if err := c.Cronjobs.Update(ctx, job); err != nil {
+	if err := c.Cronjobs.Update(ctx, job, ""); err != nil {
 		t.Errorf("Update: nothing_to_do must be success, got %v", err)
 	}
 	if err := c.Cronjobs.Delete(ctx, job.ID); err != nil {
@@ -269,7 +279,7 @@ func TestCronjobs_UpdateAndDeleteFaults(t *testing.T) {
 	}
 
 	c, _ = newFake(t, map[string]string{"update_cronjob": "!cronjob_not_found", "delete_cronjob": "!cronjob_id_not_found"})
-	if err := c.Cronjobs.Update(ctx, job); !errors.Is(err, ErrNotFound) {
+	if err := c.Cronjobs.Update(ctx, job, ""); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Update: expected ErrNotFound, got %v", err)
 	}
 	if err := c.Cronjobs.Delete(ctx, job.ID); !errors.Is(err, ErrNotFound) {
@@ -277,7 +287,7 @@ func TestCronjobs_UpdateAndDeleteFaults(t *testing.T) {
 	}
 
 	c, _ = newFake(t, map[string]string{"update_cronjob": "!minute_syntax_incorrect", "delete_cronjob": "!in_progress"})
-	if err := c.Cronjobs.Update(ctx, job); err == nil || !strings.Contains(err.Error(), "updating cronjob 325208") {
+	if err := c.Cronjobs.Update(ctx, job, ""); err == nil || !strings.Contains(err.Error(), "updating cronjob 325208") {
 		t.Errorf("Update fault: %v", err)
 	}
 	if err := c.Cronjobs.Delete(ctx, job.ID); err == nil || errors.Is(err, ErrNotFound) ||

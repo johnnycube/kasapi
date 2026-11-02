@@ -17,12 +17,23 @@ import (
 type AuthType string
 
 const (
-	AuthPlain AuthType = "plain" // password as-is
-	AuthSHA1  AuthType = "sha1"  // SHA1 hex digest of the password
+	// AuthPlain sends the password as-is.
+	AuthPlain AuthType = "plain"
+	// AuthSHA1 sends the SHA1 hex digest of the password. KAS mandates the
+	// algorithm; the digest is as good as the password, so TLS carries the
+	// security either way.
+	AuthSHA1 AuthType = "sha1"
 )
 
+// handshakeError is a KasAuth call KAS rejected, as opposed to a session the
+// API rejected. It wraps the fault so callers can still read the code.
+type handshakeError struct{ err error }
+
+func (e *handshakeError) Error() string { return "authentication failed: " + e.err.Error() }
+func (e *handshakeError) Unwrap() error { return e.err }
+
 // ensureSessionLocked creates a session token via KasAuth if the cached one is
-// missing or expired. Caller must hold c.mu.
+// missing or expired. Caller must hold c.sem.
 func (c *Client) ensureSessionLocked(ctx context.Context) error {
 	if c.token != "" && time.Now().Before(c.tokenExp) {
 		return nil
@@ -64,7 +75,7 @@ func (c *Client) ensureSessionLocked(ctx context.Context) error {
 	ret, err := c.soapCall(ctx, c.cfg.AuthEndpoint, authNamespace, "KasAuth", string(payload))
 	if err != nil {
 		// The payload is intentionally omitted so credentials are never echoed.
-		return fmt.Errorf("kasapi: authentication failed: %w", err)
+		return &handshakeError{err: err}
 	}
 
 	token := asString(ret)
@@ -74,13 +85,30 @@ func (c *Client) ensureSessionLocked(ctx context.Context) error {
 		}
 	}
 	if token == "" {
-		return fmt.Errorf("kasapi: authentication returned no session token")
+		return errors.New("kasapi: authentication returned no session token")
 	}
 
 	c.token = token
-	// Expire a bit early to avoid racing the server.
-	c.tokenExp = time.Now().Add(time.Duration(c.cfg.SessionLifetime-60) * time.Second)
+	c.tokenExp = time.Now().Add(c.sessionTTL())
 	return nil
+}
+
+// sessionTTL is how long a fresh or used token is trusted: the lifetime less
+// a margin, so the client never races the server's expiry.
+func (c *Client) sessionTTL() time.Duration {
+	lifetime := time.Duration(c.cfg.SessionLifetime) * time.Second
+	margin := time.Minute
+	if lifetime <= 2*margin {
+		margin = lifetime / 2
+	}
+	return lifetime - margin
+}
+
+// setPassword replaces the stored password, e.g. after UpdateOwnPassword.
+func (c *Client) setPassword(password string) {
+	c.sem <- struct{}{}
+	c.cfg.Password = password
+	<-c.sem
 }
 
 func isSessionError(code string) bool {
@@ -94,8 +122,10 @@ func isSessionError(code string) bool {
 // Logout ends the open KAS session (delete_session). The next call logs in
 // again. Without an open session it does nothing.
 func (c *Client) Logout(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	if err := c.lock(ctx); err != nil {
+		return err
+	}
+	defer c.unlock()
 	if c.token == "" || !time.Now().Before(c.tokenExp) {
 		c.token = ""
 		return nil
@@ -107,7 +137,7 @@ func (c *Client) Logout(ctx context.Context) error {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("kasapi: logging out: %w", err)
+		return fmt.Errorf("logging out: %w", err)
 	}
 	return nil
 }

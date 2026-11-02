@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -93,13 +94,73 @@ func TestConfig_ViewRedacts(t *testing.T) {
 
 func TestPath_EnvOverrideAndDefault(t *testing.T) {
 	t.Setenv("KASCONFIG", "/tmp/custom-kasconfig")
-	if Path() != "/tmp/custom-kasconfig" {
-		t.Fatalf("KASCONFIG override ignored: %q", Path())
+	if p, err := Path(); err != nil || p != "/tmp/custom-kasconfig" {
+		t.Fatalf("KASCONFIG override ignored: %q %v", p, err)
 	}
 	t.Setenv("KASCONFIG", "")
-	p := Path()
-	if !strings.HasSuffix(p, "kasapi/config") && p != ".kasapi-config" {
-		t.Fatalf("unexpected default path: %q", p)
+	p, err := Path()
+	if err != nil || !strings.HasSuffix(p, filepath.Join("kasapi", "config")) {
+		t.Fatalf("unexpected default path: %q %v", p, err)
+	}
+}
+
+func TestConfig_LoosePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no mode bits on Windows")
+	}
+	dir := t.TempDir()
+	write := func(name, content string, mode os.FileMode) *Config {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), mode); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		return cfg
+	}
+	withPassword := "contexts:\n  - name: prod\n    login: w1\n    password: s3cret\n"
+	if !write("loose", withPassword, 0o644).LoosePermissions() {
+		t.Error("a world-readable file with a password must be reported")
+	}
+	if write("tight", withPassword, 0o600).LoosePermissions() {
+		t.Error("a private file must not be reported")
+	}
+	if write("nopassword", "contexts:\n  - name: prod\n    login: w1\n", 0o644).LoosePermissions() {
+		t.Error("a file without password must not be reported")
+	}
+	if (&Config{}).LoosePermissions() {
+		t.Error("a config that was never loaded must not be reported")
+	}
+}
+
+func TestConfig_SaveReplacesAtomically(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config")
+	// A file loosened by hand gets its mode back on the next save.
+	if err := os.WriteFile(path, []byte("contexts: []\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{}
+	cfg.Set(Context{Name: "prod", Login: "w1"})
+	if err := cfg.Save(path); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		info, _ := os.Stat(path)
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("mode after save: %o", info.Mode().Perm())
+		}
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Fatalf("a save must leave no temporary file behind: %v", entries)
+	}
+	loaded, err := Load(path)
+	if err != nil || len(loaded.Contexts) != 1 {
+		t.Fatalf("Load after save: %+v %v", loaded, err)
 	}
 }
 
@@ -274,7 +335,11 @@ func TestPath_WithoutHome(t *testing.T) {
 	t.Setenv("KASCONFIG", "")
 	t.Setenv("HOME", "")
 	t.Setenv("XDG_CONFIG_HOME", "")
-	if got := Path(); got != ".kasapi-config" {
+	got, err := Path()
+	if err == nil {
 		t.Skipf("the platform resolves a home directory without $HOME: %q", got)
+	}
+	if !strings.Contains(err.Error(), "KASCONFIG") {
+		t.Fatalf("the error must point at KASCONFIG: %v", err)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 
 	"gopkg.in/yaml.v3"
@@ -29,19 +30,23 @@ type Context struct {
 type Config struct {
 	CurrentContext string
 	Contexts       []Context
+
+	// perm is the mode of the file Load read, for LoosePermissions.
+	perm os.FileMode
 }
 
 // Path returns the config file location: $KASCONFIG if set, else
-// ~/.config/kasapi/config.
-func Path() string {
+// ~/.config/kasapi/config. Without a home directory there is no default: a
+// credentials file must not land in the working directory by accident.
+func Path() (string, error) {
 	if p := os.Getenv("KASCONFIG"); p != "" {
-		return p
+		return p, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ".kasapi-config"
+		return "", fmt.Errorf("locating the config file: %w (set KASCONFIG)", err)
 	}
-	return filepath.Join(home, ".config", "kasapi", "config")
+	return filepath.Join(home, ".config", "kasapi", "config"), nil
 }
 
 // file is the on-disk YAML shape (kubeconfig-style). It is decoupled from the
@@ -82,6 +87,9 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg := &Config{CurrentContext: f.CurrentContext}
+	if info, err := os.Stat(path); err == nil {
+		cfg.perm = info.Mode().Perm()
+	}
 	for _, e := range f.Contexts {
 		cfg.Contexts = append(cfg.Contexts, Context(e))
 	}
@@ -89,9 +97,25 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
+// LoosePermissions reports whether the file Load read stores a password and
+// other users may read it. Windows has no such mode bits, so it never warns.
+func (c *Config) LoosePermissions() bool {
+	if runtime.GOOS == "windows" || c.perm&0o077 == 0 {
+		return false
+	}
+	for _, ctx := range c.Contexts {
+		if ctx.Password != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // Save writes the config with 0600 permissions (it may contain passwords),
-// creating parent directories as needed. Contexts are already kept sorted by
-// name, so the output is stable across saves.
+// creating parent directories as needed. The file is written next to its
+// final place and renamed over it, so a crash leaves the old config intact
+// and a file that was loosened by hand gets its mode back. Contexts are
+// already kept sorted by name, so the output is stable across saves.
 func (c *Config) Save(path string) error {
 	f := file{
 		APIVersion:     "v1",
@@ -105,10 +129,30 @@ func (c *Config) Save(path string) error {
 	if err != nil {
 		return fmt.Errorf("encoding config: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
-	return os.WriteFile(path, data, 0o600)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*")
+	if err != nil {
+		return fmt.Errorf("writing config: %w", err)
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing config: %w", err)
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("writing config: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("writing config: %w", err)
+	}
+	return nil
 }
 
 // tree converts the config to the generic structure; redact replaces

@@ -134,7 +134,11 @@ func TestServer_API(t *testing.T) {
 		"<key>action</key><value>get_dns_settings</value>",
 		// Escaped parameters arrive decoded at the handler.
 		"<key>zone</key><value>a&b <x></value>",
-		"<key>KasFloodDelay</key>",
+		// The flood delay sits inside Response, as in a real answer.
+		"<key>KasFloodDelay</key><value>0.01</value></item>\n    <item><key>ReturnString</key>",
+		// The request is echoed, escaped.
+		"<key>KasRequestType</key><value>get_dns_settings</value>",
+		"<key>zone_host</key><value>a&amp;b &lt;x&gt;</value>",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("response lacks %q:\n%s", want, body)

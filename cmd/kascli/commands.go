@@ -258,17 +258,49 @@ func cmdDelete(g *globals, args []string) error {
 }
 
 func newExecCmd(g *globals) *cobra.Command {
-	return &cobra.Command{
+	var raw bool
+	cmd := &cobra.Command{
 		Use:   "exec <action> [key=value ...]",
-		Short: "run any raw KAS action",
+		Short: "run any raw KAS action; passwords and keys in the response are redacted (--raw shows them)",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return cmdExec(g, args)
+			return cmdExec(g, args, raw)
 		},
 	}
+	cmd.Flags().BoolVar(&raw, "raw", false, "print the passwords and private keys KAS returns instead of REDACTED")
+	return cmd
 }
 
-func cmdExec(g *globals, args []string) error {
+// isSecretKey marks the response fields of get_* actions that carry a secret:
+// the stored passwords and the TLS private key. show_password is a flag.
+func isSecretKey(key string) bool {
+	return (strings.HasSuffix(key, "_password") && key != "show_password") || key == "ssl_certificate_sni_key"
+}
+
+// redactSecrets replaces secret values in a decoded response with REDACTED.
+func redactSecrets(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, val := range t {
+			if s, ok := val.(string); ok && s != "" && isSecretKey(k) {
+				out[k] = "REDACTED"
+				continue
+			}
+			out[k] = redactSecrets(val)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, val := range t {
+			out[i] = redactSecrets(val)
+		}
+		return out
+	}
+	return v
+}
+
+func cmdExec(g *globals, args []string, raw bool) error {
 	action := args[0]
 	params := map[string]any{}
 	for _, arg := range args[1:] {
@@ -292,6 +324,9 @@ func cmdExec(g *globals, args []string) error {
 	ret, err := client.Exec(ctx, action, params)
 	if err != nil {
 		return err
+	}
+	if !raw {
+		ret = redactSecrets(ret)
 	}
 	return p.printObject(ret)
 }

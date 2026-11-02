@@ -95,8 +95,10 @@ type xmlNode struct {
 }
 
 func parseXMLTree(raw []byte) (*xmlNode, error) {
+	// KAS answers well-formed XML (every recorded response parses strictly),
+	// so a malformed body is an error rather than a guessed tree.
 	dec := xml.NewDecoder(bytes.NewReader(raw))
-	dec.Strict = false
+	dec.Strict = true
 	root := &xmlNode{name: "#root"}
 	stack := []*xmlNode{root}
 

@@ -32,9 +32,9 @@ type Cronjob struct {
 	Month      string
 	DayOfWeek  string // 0-7, Sunday is 0 or 7
 
-	// HTTP basic auth. The password is write-only.
-	HTTPUser     string
-	HTTPPassword string
+	// HTTPUser is the HTTP basic auth user. Its password is passed to Create
+	// and Update separately and never read back.
+	HTTPUser string
 
 	// MailAddress receives the output of each run.
 	MailAddress string
@@ -66,7 +66,7 @@ func cronjobFrom(m map[string]any) Cronjob {
 	}
 }
 
-func (j Cronjob) validate() error {
+func (j Cronjob) validate(httpPassword string) error {
 	if strings.TrimSpace(j.URL) == "" {
 		return errors.New("kasapi: cronjob URL must not be empty")
 	}
@@ -86,7 +86,7 @@ func (j Cronjob) validate() error {
 	default:
 		return fmt.Errorf("kasapi: cronjob mail subject must be default or comment, got %q", j.MailSubject)
 	}
-	if j.HTTPPassword != "" && j.HTTPUser == "" {
+	if httpPassword != "" && j.HTTPUser == "" {
 		return errors.New("kasapi: cronjob HTTP password needs an HTTP user")
 	}
 	if j.MailAddress != "" {
@@ -105,7 +105,7 @@ func orStar(field string) string {
 }
 
 // params renders the request parameters Create and Update share.
-func (j Cronjob) params() map[string]any {
+func (j Cronjob) params(httpPassword string) map[string]any {
 	protocol := j.Protocol
 	if protocol == "" {
 		protocol = "https"
@@ -122,9 +122,9 @@ func (j Cronjob) params() map[string]any {
 		"is_active":       yn(j.Active),
 	}
 	// The user alone would clear the stored password.
-	if j.HTTPUser != "" && j.HTTPPassword != "" {
+	if j.HTTPUser != "" && httpPassword != "" {
 		params["http_user"] = j.HTTPUser
-		params["http_password"] = j.HTTPPassword
+		params["http_password"] = httpPassword
 	}
 	if j.MailAddress != "" {
 		params["mail_address"] = j.MailAddress
@@ -171,15 +171,16 @@ func (s *CronjobService) Get(ctx context.Context, id string) (*Cronjob, error) {
 	return nil, ErrNotFound
 }
 
-// Create adds a cronjob and returns the KAS-assigned id.
-func (s *CronjobService) Create(ctx context.Context, j Cronjob) (string, error) {
-	if err := j.validate(); err != nil {
+// Create adds a cronjob and returns the KAS-assigned id. httpPassword is the
+// basic auth password of j.HTTPUser; both or neither must be set.
+func (s *CronjobService) Create(ctx context.Context, j Cronjob, httpPassword string) (string, error) {
+	if err := j.validate(httpPassword); err != nil {
 		return "", err
 	}
-	if j.HTTPUser != "" && j.HTTPPassword == "" {
+	if j.HTTPUser != "" && httpPassword == "" {
 		return "", errors.New("kasapi: cronjob HTTP user needs an HTTP password")
 	}
-	ret, err := s.c.Exec(ctx, "add_cronjob", j.params())
+	ret, err := s.c.Exec(ctx, "add_cronjob", j.params(httpPassword))
 	if err != nil {
 		return "", fmt.Errorf("creating cronjob %q: %w", j.Comment, err)
 	}
@@ -190,15 +191,17 @@ func (s *CronjobService) Create(ctx context.Context, j Cronjob) (string, error) 
 	return id, nil
 }
 
-// Update replaces the settings of j.ID; basic auth is sent only with user and password.
-func (s *CronjobService) Update(ctx context.Context, j Cronjob) error {
+// Update replaces the settings of j.ID. Basic auth is sent only when
+// httpPassword is given with j.HTTPUser; an empty password keeps the stored
+// one, so a job read with Get can be written back as it is.
+func (s *CronjobService) Update(ctx context.Context, j Cronjob, httpPassword string) error {
 	if j.ID == "" {
 		return errors.New("kasapi: cronjob id must not be empty")
 	}
-	if err := j.validate(); err != nil {
+	if err := j.validate(httpPassword); err != nil {
 		return err
 	}
-	params := j.params()
+	params := j.params(httpPassword)
 	params["cronjob_id"] = j.ID
 	return wrapHostErr("updating cronjob", j.ID, s.c.update(ctx, "update_cronjob", params))
 }

@@ -8,14 +8,17 @@
 package kasapitest
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -36,6 +39,8 @@ type Server struct {
 	Token string
 	// OTP, when set, is the one-time PIN KasAuth requires as session_2fa.
 	OTP string
+	// FloodDelay is the KasFloodDelay every response reports (default "0.01").
+	FloodDelay string
 
 	AuthCalls atomic.Int64
 	APICalls  atomic.Int64
@@ -49,7 +54,7 @@ var paramsRe = regexp.MustCompile(`(?s)<Params[^>]*>(.*?)</Params>`)
 
 // New starts a fake KAS server; it is closed automatically via t.Cleanup.
 func New(t testing.TB, handler Handler) *Server {
-	s := &Server{Password: "secret", Token: "session-token-1", handler: handler}
+	s := &Server{Password: "secret", Token: "session-token-1", FloodDelay: "0.01", handler: handler}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.Close)
 	return s
@@ -96,14 +101,39 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.WriteFault(w, fault)
 		return
 	}
+	// The layout of a real response: KAS echoes the request, parameters
+	// included, and reports the flood delay inside Response.
 	fmt.Fprint(w, Envelope(`<return>
-  <item><key>Request</key><value></value></item>
+  <item><key>Request</key><value>
+    <item><key>KasRequestType</key><value>`+action+`</value></item>
+    <item><key>KasRequestParams</key><value>`+paramItems(params)+`</value></item>
+  </value></item>
   <item><key>Response</key><value>
+    <item><key>KasFloodDelay</key><value>`+s.FloodDelay+`</value></item>
     <item><key>ReturnString</key><value>TRUE</value></item>
     <item><key>ReturnInfo</key><value>`+info+`</value></item>
   </value></item>
-  <item><key>KasFloodDelay</key><value>0.01</value></item>
 </return>`))
+}
+
+// paramItems renders the request parameters as an apache Map, escaped.
+func paramItems(params map[string]any) string {
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(MapItem(escape(k), escape(fmt.Sprint(params[k]))))
+	}
+	return b.String()
+}
+
+func escape(s string) string {
+	var buf bytes.Buffer
+	_ = xml.EscapeText(&buf, []byte(s))
+	return buf.String()
 }
 
 // serveAuth answers a KasAuth request: it checks password and PIN and
