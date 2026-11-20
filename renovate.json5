@@ -38,6 +38,9 @@
   // hijacked-package incidents are usually yanked before a PR appears. Security
   // fixes bypass this via vulnerabilityAlerts.
   minimumReleaseAge: '3 days',
+  // Digest updates and lock file maintenance carry no release timestamp; without
+  // this their renovate/stability-days check stays pending and they never merge.
+  minimumReleaseAgeBehaviour: 'timestamp-optional',
   // Hold updates that have not yet met minimumReleaseAge instead of opening a
   // PR with a pending check.
   internalChecksFilter: 'strict',
